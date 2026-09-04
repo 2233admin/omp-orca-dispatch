@@ -1,0 +1,41 @@
+name: Cached CI baseline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ gitea.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    runs-on: xart-safe
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: http://172.17.0.1:8419/actions/checkout@v4
+
+      - name: Restore dependency caches
+        id: cache
+        uses: http://172.17.0.1:8419/actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.npm
+          key: xart-dev-template-v1
+
+      - name: Verify development toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          git --version
+          python3 --version
+          node --version
+          npm --version
+          mkdir -p "$HOME/.cache/pip" "$HOME/.npm"
+          date -u +%FT%TZ > "$HOME/.cache/pip/xart-cache-probe"
+          test -f .env.example
+          echo "cache-hit=${{ steps.cache.outputs.cache-hit }}"
