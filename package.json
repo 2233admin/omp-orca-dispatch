@@ -1,0 +1,77 @@
+{
+  "name": "omp-orca-dispatch",
+  "version": "0.1.0",
+  "description": "Portable Pi and Oh My Pi extension for safe parallel Orca worktree dispatch",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "chen-qianyu",
+  "repository": {
+    "type": "git",
+    "url": "ssh://sc-gitea@git.xart.top:52259/chen-qianyu/omp-orca-dispatch.git"
+  },
+  "homepage": "https://git.xart.top/chen-qianyu/omp-orca-dispatch",
+  "bugs": {
+    "url": "https://git.xart.top/chen-qianyu/omp-orca-dispatch/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "oh-my-pi",
+    "orca",
+    "worktree",
+    "multi-agent"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "extensions",
+    "src",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./pi": "./extensions/pi.ts",
+    "./omp": "./extensions/omp.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi.ts"
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "prepack": "npm run check && npm run build"
+  },
+  "dependencies": {
+    "typebox": "1.3.7"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.4",
+    "@oh-my-pi/pi-coding-agent": ">=18.1.8"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
