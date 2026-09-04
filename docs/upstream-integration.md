@@ -39,7 +39,7 @@ Every child creation receives:
 - one self-contained prompt;
 - one exclusive list of repository-relative literal paths.
 
-Scope comparison is case-insensitive for portability across Windows, Linux, and default macOS filesystems. Parent/child overlap, root ownership, traversal, globs, `.git`, absolute paths, and Windows-invalid path forms are rejected.
+Scope comparison is case-insensitive after NFC normalization for portability across Windows, Linux, and default macOS filesystems. The first validated spelling remains in each returned scope list. Parent/child overlap, root ownership, traversal, globs, `.git`, absolute paths, Windows-invalid path forms, and C0 (`U+0000`–`U+001F`) or DEL (`U+007F`) control characters are rejected.
 
 Creation runs concurrently, while returned slice results preserve request order. A failed create is isolated into a per-slice result because Orca may have partially created external state. The caller receives dispatched, partial, or failed status and must reconcile any uncertain child explicitly.
 

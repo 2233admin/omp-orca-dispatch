@@ -11,7 +11,9 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Portable Orca dispatch core for 2–3 concurrent, disjoint worktree slices anchored to one exact parent HEAD.
 - Explicit Pi TypeBox and OMP Zod extension entrypoints and package manifests.
 - Dependency-free Node.js CLI for host install, uninstall, doctor, help, version, local operation, and dry-run actions.
-- Tracker-agnostic `sourceRef`, worker ownership and trust boundaries, recursion refusal, stable result ordering, partial-failure reporting, and URL credential redaction.
+- Scope validation rejects all C0 (`U+0000`–`U+001F`) and DEL (`U+007F`) control characters and compares deduplication/overlap keys using NFC normalization plus case-insensitive matching while preserving the first validated scope spelling.
+
+### Added
 - Observable-contract tests, cross-platform package metadata, Gitea and GitHub CI, contributor guidance, security policy, and Apache-2.0 licensing.
 
 [Unreleased]: https://git.xart.top/chen-qianyu/omp-orca-dispatch/compare/v0.1.0...main

@@ -126,9 +126,13 @@ function validateSourceRef(value: unknown): string | undefined {
 }
 
 function validateScope(value: unknown, sliceName: string): string {
-  const scope = text(value).replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
+  const rawScope = typeof value === "string" ? value : "";
+  if (/[\u0000-\u001F\u007F]/.test(rawScope)) {
+    throw new Error(`Slice ${sliceName} scope must not contain C0 or DEL control characters`);
+  }
+  const scope = rawScope.trim().replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
   if (!scope || scope === ".") throw new Error(`Slice ${sliceName} has an empty or repository-root scope`);
-  if (scope.length > MAX_SCOPE_CHARS || /[\r\n\0*?\[\]<>:"|]/.test(scope)) {
+  if (scope.length > MAX_SCOPE_CHARS || /[*?\[\]<>:"|]/.test(scope)) {
     throw new Error(`Slice ${sliceName} scope must be a portable literal path of at most ${MAX_SCOPE_CHARS} characters`);
   }
   if (scope.startsWith("/") || /^[A-Za-z]:/.test(scope)) {
@@ -142,6 +146,10 @@ function validateScope(value: unknown, sliceName: string): string {
     throw new Error(`Slice ${sliceName} scope is not portable across Windows, Linux, and macOS`);
   }
   return scope;
+}
+
+function scopeKey(path: string): string {
+  return path.normalize("NFC").toLowerCase();
 }
 
 function validateAgent(value: unknown): string {
@@ -172,11 +180,11 @@ export function validateTaskDispatch(params: TaskDispatchParams): ValidatedDispa
     const uniqueScopes = new Map<string, string>();
     for (const rawPath of raw.scope) {
       const path = validateScope(rawPath, name);
-      uniqueScopes.set(path.toLowerCase(), path);
+      if (!uniqueScopes.has(scopeKey(path))) uniqueScopes.set(scopeKey(path), path);
     }
     const scope = [...uniqueScopes.values()];
     for (const path of scope) {
-      const key = path.toLowerCase();
+      const key = scopeKey(path);
       const conflict = ownedScopes.find(
         (owned) => owned.key === key || owned.key.startsWith(`${key}/`) || key.startsWith(`${owned.key}/`),
       );

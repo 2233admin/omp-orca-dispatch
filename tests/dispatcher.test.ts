@@ -96,6 +96,29 @@ test("rejects overlapping and unsafe literal scopes portably", () => {
     /overlap/,
   );
 
+  const deduplicated = validateTaskDispatch(
+    params({
+      slices: [
+        { name: "one", task: "A", scope: ["docs/café", "DOCS/cafe\u0301"] },
+        { name: "two", task: "B", scope: ["other"] },
+      ],
+    }),
+  );
+  assert.deepEqual(deduplicated.slices.at(0)?.scope, ["docs/café"]);
+
+  assert.throws(
+    () =>
+      validateTaskDispatch(
+        params({
+          slices: [
+            { name: "composed", task: "A", scope: ["docs/café"] },
+            { name: "decomposed", task: "B", scope: ["docs/cafe\u0301/guide.md"] },
+          ],
+        }),
+      ),
+    /overlap/,
+  );
+
   for (const unsafe of [".", "../outside", "/absolute", "C:\\repo", ".git/config", "src/*.ts", "src/../../escape"]) {
     assert.throws(
       () =>
@@ -109,6 +132,23 @@ test("rejects overlapping and unsafe literal scopes portably", () => {
         ),
       /scope|repository-relative|literal path/,
       unsafe,
+    );
+  }
+
+  for (const codePoint of [...Array(32).keys(), 0x7f]) {
+    const unsafe = `src/control-${String.fromCodePoint(codePoint)}segment`;
+    assert.throws(
+      () =>
+        validateTaskDispatch(
+          params({
+            slices: [
+              { name: "one", task: "A", scope: [unsafe] },
+              { name: "two", task: "B", scope: ["safe"] },
+            ],
+          }),
+        ),
+      /control characters/,
+      `U+${codePoint.toString(16).padStart(4, "0")}`,
     );
   }
 });

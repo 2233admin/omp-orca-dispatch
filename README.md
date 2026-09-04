@@ -63,7 +63,7 @@ The package manifests select the host-specific modules explicitly:
 
 ## Dispatch contract
 
-A request must contain exactly 2 or 3 independent slices. Slice names are normalized before uniqueness checks. Every scope is a repository-relative literal file or directory path; globs, parent traversal, repository root ownership, `.git`, absolute paths, Windows-reserved names, and cross-slice parent/child overlap are rejected. Comparisons are case-insensitive so a plan remains disjoint on Windows and default macOS filesystems as well as Linux.
+A request must contain exactly 2 or 3 independent slices. Slice names are normalized before uniqueness checks. Every scope is a repository-relative literal file or directory path; globs, parent traversal, repository root ownership, `.git`, absolute paths, Windows-reserved names, cross-slice parent/child overlap, and C0 (`U+0000`–`U+001F`) or DEL (`U+007F`) control characters are rejected. Scope keys are compared case-insensitively after NFC normalization so canonically equivalent Unicode paths cannot bypass disjointness checks; the first validated scope spelling is retained in the returned slice.
 
 All `orca worktree create` calls receive the same exact HEAD returned by `orca worktree current --json`, the same parent worktree ID, and argv-only arguments. Result order follows input order even though creation is concurrent. Failed creates are reported per slice with possible-partial-create status and redacted URL credentials.
 
