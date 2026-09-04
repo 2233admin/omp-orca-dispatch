@@ -17,9 +17,9 @@ test("package metadata declares public portable compatibility", () => {
   assert.equal(packageJson.publishConfig.access, "public");
 });
 
-test("package exports explicit Pi and OMP extension entrypoints", () => {
-  assert.equal(packageJson.exports["./pi"], "./extensions/pi.ts");
-  assert.equal(packageJson.exports["./omp"], "./extensions/omp.ts");
+test("package exports compiled Pi and OMP extension entrypoints while host manifests use source", () => {
+  assert.deepEqual(packageJson.exports["./pi"], { types: "./dist/extensions/pi.d.ts", import: "./dist/extensions/pi.js" });
+  assert.deepEqual(packageJson.exports["./omp"], { types: "./dist/extensions/omp.d.ts", import: "./dist/extensions/omp.js" });
   assert.deepEqual(packageJson.pi.extensions, ["./extensions/pi.ts"]);
   assert.deepEqual(packageJson.omp.extensions, ["./extensions/omp.ts"]);
 });
