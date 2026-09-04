@@ -127,12 +127,19 @@ function validateSourceRef(value: unknown): string | undefined {
 
 function validateScope(value: unknown, sliceName: string): string {
   const scope = text(value).replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
-  if (!scope) throw new Error(`Slice ${sliceName} has an empty scope`);
-  if (scope.length > MAX_SCOPE_CHARS || /[\r\n\0*?[\]]/.test(scope)) {
-    throw new Error(`Slice ${sliceName} scope must be a literal path of at most ${MAX_SCOPE_CHARS} characters`);
+  if (!scope || scope === ".") throw new Error(`Slice ${sliceName} has an empty or repository-root scope`);
+  if (scope.length > MAX_SCOPE_CHARS || /[\r\n\0*?\[\]<>:"|]/.test(scope)) {
+    throw new Error(`Slice ${sliceName} scope must be a portable literal path of at most ${MAX_SCOPE_CHARS} characters`);
   }
-  if (scope.startsWith("/") || /^[A-Za-z]:/.test(scope) || scope.split("/").includes("..")) {
+  if (scope.startsWith("/") || /^[A-Za-z]:/.test(scope)) {
     throw new Error(`Slice ${sliceName} scope must be repository-relative`);
+  }
+  const segments = scope.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || segment.toLowerCase() === ".git")) {
+    throw new Error(`Slice ${sliceName} scope contains an unsafe path segment`);
+  }
+  if (segments.some((segment) => /[. ]$/.test(segment) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment))) {
+    throw new Error(`Slice ${sliceName} scope is not portable across Windows, Linux, and macOS`);
   }
   return scope;
 }
@@ -152,7 +159,7 @@ export function validateTaskDispatch(params: TaskDispatchParams): ValidatedDispa
   }
 
   const names = new Set<string>();
-  const ownedScopes: Array<{ name: string; path: string }> = [];
+  const ownedScopes: Array<{ name: string; path: string; key: string }> = [];
   const slices = params.slices.map((raw, index) => {
     if (!isObject(raw)) throw new Error(`slices[${index}] must be an object`);
     const name = safeWorktreeName(raw.name);
@@ -162,13 +169,19 @@ export function validateTaskDispatch(params: TaskDispatchParams): ValidatedDispa
     if (!Array.isArray(raw.scope) || raw.scope.length === 0) {
       throw new Error(`Slice ${name} requires at least one scope path`);
     }
-    const scope = [...new Set(raw.scope.map((path) => validateScope(path, name)))];
+    const uniqueScopes = new Map<string, string>();
+    for (const rawPath of raw.scope) {
+      const path = validateScope(rawPath, name);
+      uniqueScopes.set(path.toLowerCase(), path);
+    }
+    const scope = [...uniqueScopes.values()];
     for (const path of scope) {
+      const key = path.toLowerCase();
       const conflict = ownedScopes.find(
-        (owned) => owned.path === path || owned.path.startsWith(`${path}/`) || path.startsWith(`${owned.path}/`),
+        (owned) => owned.key === key || owned.key.startsWith(`${key}/`) || key.startsWith(`${owned.key}/`),
       );
       if (conflict) throw new Error(`Slice scopes overlap: ${conflict.name}:${conflict.path} and ${name}:${path}`);
-      ownedScopes.push({ name, path });
+      ownedScopes.push({ name, path, key });
     }
     return { name, task: sliceTask, scope };
   });

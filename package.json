@@ -5,6 +5,11 @@
   "type": "module",
   "license": "Apache-2.0",
   "author": "chen-qianyu",
+  "sideEffects": false,
+  "os": ["darwin", "linux", "win32"],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "ssh://sc-gitea@git.xart.top:52259/chen-qianyu/omp-orca-dispatch.git"
@@ -23,12 +28,21 @@
   "engines": {
     "node": ">=22.19.0"
   },
+  "ompOrcaDispatch": {
+    "orca": ">=1.4.195",
+    "platforms": ["Windows", "Linux", "macOS"]
+  },
+  "bin": {
+    "orca-task-dispatch": "./bin/orca-task-dispatch.mjs"
+  },
   "files": [
     "bin",
     "dist",
+    "docs",
     "extensions",
     "src",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
     "SECURITY.md"
@@ -46,11 +60,18 @@
       "./extensions/pi.ts"
     ]
   },
+  "omp": {
+    "extensions": [
+      "./extensions/omp.ts"
+    ]
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage tests/*.test.ts",
     "check": "npm run typecheck && npm test",
+    "package:dry-run": "npm pack --dry-run",
     "prepack": "npm run check && npm run build"
   },
   "dependencies": {

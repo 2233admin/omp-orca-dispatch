@@ -1,4 +1,4 @@
-name: Cached CI baseline
+name: CI
 
 on:
   push:
@@ -7,35 +7,31 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ gitea.ref }}
+  group: omp-orca-dispatch-${{ gitea.ref }}
   cancel-in-progress: true
 
 jobs:
-  baseline:
+  verify:
     runs-on: xart-safe
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: http://172.17.0.1:8419/actions/checkout@v4
 
-      - name: Restore dependency caches
-        id: cache
-        uses: http://172.17.0.1:8419/actions/cache@v4
+      - name: Set up Node.js
+        uses: http://172.17.0.1:8419/actions/setup-node@v4
         with:
-          path: |
-            ~/.cache/pip
-            ~/.npm
-          key: xart-dev-template-v1
+          node-version: 22.19.0
+          cache: npm
 
-      - name: Verify development toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          git --version
-          python3 --version
-          node --version
-          npm --version
-          mkdir -p "$HOME/.cache/pip" "$HOME/.npm"
-          date -u +%FT%TZ > "$HOME/.cache/pip/xart-cache-probe"
-          test -f .env.example
-          echo "cache-hit=${{ steps.cache.outputs.cache-hit }}"
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check behavior and types
+        run: npm run check
+
+      - name: Build package
+        run: npm run build
+
+      - name: Inspect publish archive
+        run: npm run package:dry-run

@@ -13,6 +13,15 @@
       "groupName": "development dependencies"
     },
     {
+      "description": "Keep host compatibility updates explicit",
+      "matchPackageNames": [
+        "@earendil-works/pi-coding-agent",
+        "@oh-my-pi/pi-coding-agent"
+      ],
+      "groupName": "host compatibility",
+      "automerge": false
+    },
+    {
       "description": "Never automerge major updates",
       "matchUpdateTypes": ["major"],
       "automerge": false
