@@ -45,7 +45,7 @@ The Cargo command is mandatory evidence even though this repository has no `Carg
 - GitHub SSH and HTTPS currently fail at the proxy/TLS boundary: port 22 closes the connection and the device-code POST ends with EOF. No device code was issued; candidate repository ownership/existence is unresolved. Do not speculate about it.
 - The required `github-workflows` script `scripts/ci_monitor.cjs` is absent and must be restored or located before CI monitoring.
 
-A GitHub three-platform workflow exists locally, but mirror creation and CI monitoring are not complete. The primary `origin` remote remains Gitea. Do not create or configure a GitHub remote until the recovery sequence below is authorized.
+A GitHub three-platform workflow exists locally, but mirror creation and CI monitoring are not complete. The primary `origin` remote remains Gitea. Create or configure a separate GitHub remote only after connectivity is restored, authentication is valid, and the target owner is verified.
 
 ## Claude GitHub recovery sequence
 
@@ -65,4 +65,4 @@ A GitHub three-platform workflow exists locally, but mirror creation and CI moni
 4. Run all verification commands, inspect the packed file list, and perform the authorized two-slice Herdr smoke without focused-session fallback or destructive cleanup.
 5. Review the diff and docs for stale paths, URLs, secrets, and scope violations; integrate only after every gate passes.
 
-Done means Issue #1 is implemented, omitted and explicit Orca behavior is preserved, Herdr smoke evidence is recorded, all relevant tests and package gates are green, the mandatory Cargo result is recorded, GitHub mirror/CI evidence is complete if authorized, release blockers remain honestly documented, and no unapproved remote or publish operation was performed.
+Done means Issue #1 is implemented, omitted and explicit Orca behavior is preserved, Herdr smoke evidence is recorded, all relevant tests and package gates are green, the mandatory Cargo result is recorded, GitHub mirror/CI evidence is complete, release blockers remain honestly documented, and no unapproved remote or publish operation was performed.
