@@ -35,15 +35,29 @@ cargo test --workspace --no-fail-fast
 
 The Cargo command is mandatory evidence even though this repository has no `Cargo.toml`; the expected result here is the command’s nonzero “not a Rust workspace” failure, recorded as not applicable rather than hidden. The package dry-run must not leave an archive behind.
 
-## Current release blockers
+## Current release and GitHub blockers
 
 - Gitea runner Docker IPv4 pool is blocked.
 - npm publish is blocked by `ENEEDAUTH`.
 - A verified security contact is still missing.
+- The GitHub mirror has not been created.
+- The local `gh` account is `2233admin`, but its token is invalid; `GH_TOKEN` and `GITHUB_TOKEN` are absent.
+- GitHub SSH and HTTPS currently fail at the proxy/TLS boundary: port 22 closes the connection and the device-code POST ends with EOF. No device code was issued; candidate repository ownership/existence is unresolved. Do not speculate about it.
+- The required `github-workflows` script `scripts/ci_monitor.cjs` is absent and must be restored or located before CI monitoring.
 
-A GitHub three-platform workflow exists, but its mirror and CI are being created by another workstream. Do not create or configure GitHub remotes in this workstream.
+A GitHub three-platform workflow exists locally, but mirror creation and CI monitoring are not complete. The primary `origin` remote remains Gitea. Do not create or configure a GitHub remote until the recovery sequence below is authorized.
 
-## Exact next-session sequence
+## Claude GitHub recovery sequence
+
+1. Repair GitHub proxy/TLS connectivity.
+2. Run `gh auth login --web --hostname github.com --git-protocol ssh`; verify the authenticated owner without printing credentials.
+3. Create a **public** `omp-orca-dispatch` repository under that verified owner; do not assume it already exists.
+4. Add a separate `github` remote without replacing Gitea `origin`.
+5. Run the credential scan, then push `main` without force.
+6. Restore or locate `scripts/ci_monitor.cjs`; use `ci_monitor.cjs --help`, then its `runs` and `watch` commands to verify the Windows/Ubuntu/macOS matrix.
+7. Update this handoff with the canonical GitHub URL only after ownership, repository creation, push, and matrix verification succeed.
+
+## Exact next-session implementation sequence
 
 1. Read the three detailed docs named above and inspect Issue #1.
 2. Preserve the existing Orca path through a small backend seam; implement Herdr only after the documented static contract is checked from an authorized Herdr context.
@@ -51,4 +65,4 @@ A GitHub three-platform workflow exists, but its mirror and CI are being created
 4. Run all verification commands, inspect the packed file list, and perform the authorized two-slice Herdr smoke without focused-session fallback or destructive cleanup.
 5. Review the diff and docs for stale paths, URLs, secrets, and scope violations; integrate only after every gate passes.
 
-Done means Issue #1 is implemented, omitted and explicit Orca behavior is preserved, Herdr smoke evidence is recorded, all relevant tests and package gates are green, the mandatory Cargo result is recorded, release blockers remain honestly documented, and no remote/publish operation was performed.
+Done means Issue #1 is implemented, omitted and explicit Orca behavior is preserved, Herdr smoke evidence is recorded, all relevant tests and package gates are green, the mandatory Cargo result is recorded, GitHub mirror/CI evidence is complete if authorized, release blockers remain honestly documented, and no unapproved remote or publish operation was performed.
