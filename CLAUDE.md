@@ -43,15 +43,16 @@ The Cargo command is mandatory evidence even though this repository has no `Carg
 - The public GitHub mirror exists at https://github.com/2233admin/omp-orca-dispatch.
 - The authenticated GitHub owner is verified as `2233admin`. A separate `github` remote exists; Gitea `origin` remains canonical and preserved.
 - The UAC-assisted Clash service restart succeeded. The scoped proxy endpoint `127.0.0.1:7897` reaches GitHub; no proxy selector was changed.
-- The mirror is currently empty. Pushing `main` and verifying three-platform CI are the next immediate steps.
-- `scripts/ci_monitor.cjs` is absent. The remote worker will create a temporary live-docs-based monitor for this run; use its recorded CI URL and status, and do not treat the absent script as a product defect.
+- Both `origin` and `github` refs/heads/main point to `7bac43eaee6c990bf67febd71c072b4e8e8ba170`; Gitea `origin` remains canonical and preserved.
+- GitHub Actions run https://github.com/2233admin/omp-orca-dispatch/actions/runs/33943168938 completed successfully.
+- The Node 22 / `ubuntu-latest`, `macos-latest`, and `windows-latest` jobs all succeeded.
+- `scripts/ci_monitor.cjs` remains absent from this repository; the temporary live-docs-based monitor used for this run was disposable and outside the repo, so its absence is not a product defect.
 
 ## GitHub follow-through
 
-1. Run the credential scan without printing credentials.
-2. Push `main` to the existing separate `github` remote without force; never replace Gitea `origin`.
-3. Use the temporary live-docs-based monitor for this run to verify the Windows/Ubuntu/macOS matrix and record the canonical CI URL/status.
-4. Update this handoff with the CI evidence; retain the canonical GitHub mirror URL above.
+1. Treat mirror publication and three-platform CI as complete using the refs and Actions evidence above.
+2. Retain the canonical mirror URL and Actions run URL/status in this handoff.
+3. Keep the remaining release blockers documented: Gitea runner Docker IPv4 pool, npm `ENEEDAUTH`, and missing security contact.
 
 ## Exact next-session implementation sequence
 
