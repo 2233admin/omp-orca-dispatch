@@ -9,3 +9,4 @@ coverage/
 .pi-glla/
 *.log
 *.tgz
+site/dist/
