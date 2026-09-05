@@ -35,27 +35,23 @@ cargo test --workspace --no-fail-fast
 
 The Cargo command is mandatory evidence even though this repository has no `Cargo.toml`; the expected result here is the command’s nonzero “not a Rust workspace” failure, recorded as not applicable rather than hidden. The package dry-run must not leave an archive behind.
 
-## Current release and GitHub blockers
+## Current release and GitHub status
 
 - Gitea runner Docker IPv4 pool is blocked.
 - npm publish is blocked by `ENEEDAUTH`.
 - A verified security contact is still missing.
-- The GitHub mirror has not been created.
-- The local `gh` account is `2233admin`, but its token is invalid; `GH_TOKEN` and `GITHUB_TOKEN` are absent.
-- GitHub SSH and HTTPS currently fail at the proxy/TLS boundary: port 22 closes the connection and the device-code POST ends with EOF. No device code was issued; candidate repository ownership/existence is unresolved. Do not speculate about it.
-- The required `github-workflows` script `scripts/ci_monitor.cjs` is absent and must be restored or located before CI monitoring.
+- The public GitHub mirror exists at https://github.com/2233admin/omp-orca-dispatch.
+- The authenticated GitHub owner is verified as `2233admin`. A separate `github` remote exists; Gitea `origin` remains canonical and preserved.
+- The UAC-assisted Clash service restart succeeded. The scoped proxy endpoint `127.0.0.1:7897` reaches GitHub; no proxy selector was changed.
+- The mirror is currently empty. Pushing `main` and verifying three-platform CI are the next immediate steps.
+- `scripts/ci_monitor.cjs` is absent. The remote worker will create a temporary live-docs-based monitor for this run; use its recorded CI URL and status, and do not treat the absent script as a product defect.
 
-A GitHub three-platform workflow exists locally, but mirror creation and CI monitoring are not complete. The primary `origin` remote remains Gitea. Create or configure a separate GitHub remote only after connectivity is restored, authentication is valid, and the target owner is verified.
+## GitHub follow-through
 
-## Claude GitHub recovery sequence
-
-1. Repair GitHub proxy/TLS connectivity.
-2. Run `gh auth login --web --hostname github.com --git-protocol ssh`; verify the authenticated owner without printing credentials.
-3. Create a **public** `omp-orca-dispatch` repository under that verified owner; do not assume it already exists.
-4. Add a separate `github` remote without replacing Gitea `origin`.
-5. Run the credential scan, then push `main` without force.
-6. Restore or locate `scripts/ci_monitor.cjs`; use `ci_monitor.cjs --help`, then its `runs` and `watch` commands to verify the Windows/Ubuntu/macOS matrix.
-7. Update this handoff with the canonical GitHub URL only after ownership, repository creation, push, and matrix verification succeed.
+1. Run the credential scan without printing credentials.
+2. Push `main` to the existing separate `github` remote without force; never replace Gitea `origin`.
+3. Use the temporary live-docs-based monitor for this run to verify the Windows/Ubuntu/macOS matrix and record the canonical CI URL/status.
+4. Update this handoff with the CI evidence; retain the canonical GitHub mirror URL above.
 
 ## Exact next-session implementation sequence
 
