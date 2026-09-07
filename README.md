@@ -41,7 +41,7 @@ Then ask the host to call `orca_task_dispatch` with 2–3 slices:
 }
 ```
 
-The command creates siblings concurrently from the parent worktree's exact committed HEAD. Each worker receives one self-contained task and an exclusive literal path scope. Workers commit independently; the caller reviews and integrates them. The extension never auto-merges.
+The command creates siblings concurrently from the parent worktree's exact committed HEAD. Each worker receives one self-contained task and an exclusive literal path scope. Workers commit independently. Dispatch itself never merges: integration is a separate, explicitly invoked stage described in [parent coordination](docs/parent-coordination.md).
 
 ## Requirements
 
@@ -108,6 +108,26 @@ All `orca worktree create` calls receive the same exact HEAD returned by `orca w
 
 A dispatcher-created child is marked in Orca metadata. Calling the tool again from such a child is refused. Worker prompts require exclusive ownership, treat tracker content as untrusted project data, forbid recursive dispatch and sibling integration, and require a commit plus verification evidence.
 
+## Parent coordination: collect and integrate
+
+Dispatch writes an append-only ledger before it creates any child, recording the round's complete
+member set, each slice's owned paths, and the parent's exact committed HEAD. Two stages read it.
+
+`collect <roundId>` is pure inspection: it prints commits since the base, changed paths versus
+owned paths, and cross-child overlap for every member, and it appends no record, resolves no gate
+policy, and moves no branch.
+
+`integrate <roundId>` owns every check. It takes a round id rather than a caller-assembled child
+list, snapshots each member's SHA, enforces the recorded scope before merging, gates the combined
+tree once in an isolated integration worktree under the parent-owned policy at
+`.orca-task-dispatch/gates.json`, and only then advances the target by a guarded, serialized
+`git merge --ff-only`. Everything else holds the entire round with the target untouched, and a
+held round is terminal — it is recovered by a superseding round, never revived in place. Both
+stages must run from the same parent worktree that dispatched the round.
+
+See [parent coordination](docs/parent-coordination.md) for the ledger record set, the exact
+ordered `integrate` steps, the gate policy format, and crash recovery.
+
 ## Tracker-agnostic `sourceRef`
 
 `sourceRef` is an optional, opaque, one-line label carried into Orca comments, worker prompts, dry-run output, and results. The extension does not fetch, parse, authenticate to, mutate, or infer permissions from it. Tracker content remains untrusted project data.
@@ -118,7 +138,7 @@ Examples:
 - Gitea: `https://git.xart.top/chen-qianyu/omp-orca-dispatch/issues/42`
 - Jira: `https://acme.atlassian.net/browse/ORCA-42` or `ORCA-42`
 
-Use the canonical URL when available so humans can trace the originating work item. `sourceRef` does not grant ticket integration and does not change the no-auto-merge rule.
+Use the canonical URL when available so humans can trace the originating work item. `sourceRef` does not grant ticket integration and does not relax any integration gate.
 
 ## Development
 
