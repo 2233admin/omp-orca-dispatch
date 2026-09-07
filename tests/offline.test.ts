@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { after, test } from "node:test";
 
 import { parseBacklogParams, planSync, probeTracker, runBacklog } from "../src/offline.js";
+import type { SyncRecord, SyncTarget } from "../src/offline.js";
 
 const scratchRoots: string[] = [];
 
@@ -103,6 +104,140 @@ test("bind resolves the pending-triage dead end", () => {
   assert.equal(planned.records[0]?.issueRef, "CERE-7");
 });
 
+/** Drive one item to `completed` so `planSync` will plan a tracker write for it. */
+function completedItem(syncTarget: SyncTarget, title = "ship it", evidence = "commit abc"): { cwd: string; root: string } {
+  const { cwd, root } = scratch();
+  const id = String(runBacklog({ action: "enqueue", title, syncTarget }, cwd, root).id);
+  runBacklog({ action: "claim", id }, cwd, root);
+  runBacklog({ action: "complete", id, evidence }, cwd, root);
+  return { cwd, root };
+}
+
+function onlyRecord(cwd: string, root: string): SyncRecord {
+  const planned = planSync(cwd, root);
+  assert.equal(planned.records.length, 1, "one completed item plans exactly one write");
+  const record = planned.records[0];
+  assert.ok(record);
+  return record;
+}
+
+function withEnv(values: Record<string, string | undefined>, run: () => void): void {
+  const saved: Record<string, string | undefined> = {};
+  for (const key of Object.keys(values)) saved[key] = process.env[key];
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    run();
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test("plans a github comment through the same seam", () => {
+  const { cwd, root } = completedItem({ kind: "github", issueRef: "42" });
+  const record = onlyRecord(cwd, root);
+
+  assert.equal(record.command, "gh");
+  // --body-file, never stdin, for the same non-ASCII reason as the Multica adapter.
+  assert.deepEqual(record.args, ["issue", "comment", "42", "--body-file", record.bodyFile]);
+});
+
+test("plans a gitea comment against the API with the token referenced by name only", () => {
+  const { cwd, root } = completedItem({ kind: "gitea", issueRef: "https://git.example/acme/widgets/issues/7" });
+
+  withEnv({ GITEA_TOKEN: "not-a-real-token-value" }, () => {
+    const record = onlyRecord(cwd, root);
+    assert.equal(record.command, "curl");
+    assert.deepEqual(record.args, [
+      "--fail-with-body",
+      "--silent",
+      "--show-error",
+      "--request",
+      "POST",
+      "--variable",
+      "%GITEA_TOKEN",
+      "--expand-header",
+      "Authorization: token {{GITEA_TOKEN}}",
+      "--variable",
+      `body@${record.bodyFile}`,
+      "--expand-json",
+      '{"body":"{{body:json}}"}',
+      "--url",
+      "https://git.example/api/v1/repos/acme/widgets/issues/7/comments",
+    ]);
+    // The plan holds no credential even when one is present in this process's environment.
+    assert.ok(
+      record.args.every(argument => !argument.includes("not-a-real-token-value")),
+      "the token value never enters the argv",
+    );
+  });
+});
+
+test("gitea refuses a reference it cannot turn into an API URL", () => {
+  const short = completedItem({ kind: "gitea", issueRef: "acme/widgets#7" });
+
+  withEnv({ GITEA_SERVER_URL: undefined }, () => {
+    // No server and no URL: refused rather than aimed at a guessed host.
+    assert.throws(() => planSync(short.cwd, short.root), /needs GITEA_SERVER_URL/);
+  });
+  withEnv({ GITEA_SERVER_URL: "https://git.example/" }, () => {
+    const record = onlyRecord(short.cwd, short.root);
+    // The configured trailing slash must not become `//api/v1`, which is a different path.
+    assert.equal(record.args.at(-1), "https://git.example/api/v1/repos/acme/widgets/issues/7/comments");
+  });
+
+  const bare = completedItem({ kind: "gitea", issueRef: "7" });
+  withEnv({ GITEA_SERVER_URL: "https://git.example" }, () => {
+    // A bare index names no repository, so there is nothing to post to.
+    assert.throws(() => planSync(bare.cwd, bare.root), /full issue URL or "owner\/repo#index"/);
+  });
+});
+
+test("rejects an unknown tracker kind instead of inventing an argv", () => {
+  assert.throws(
+    () => parseBacklogParams({ action: "enqueue", syncTarget: { kind: "jira", issueRef: "J-1" } }),
+    /must be one of multica, gitea, github/,
+  );
+
+  // An unknown kind cannot sneak in through the log either: replay validates it the same way.
+  const { cwd, root } = completedItem({ kind: "multica", issueRef: "CERE-8" });
+  const log = logPath(root);
+  const lines = readFileSync(log, "utf8").trimEnd().split("\n");
+  const forged = lines[0]?.replace('"kind":"multica"', '"kind":"jira"') ?? "";
+  assert.match(forged, /"jira"/, "the fixture must actually carry the unknown kind");
+  writeFileSync(log, `${[forged, ...lines.slice(1)].join("\n")}\n`, "utf8");
+  assert.throws(() => planSync(cwd, root), /schema-invalid/);
+});
+
+test("carries a non-ASCII body in a UTF-8 file for every tracker", () => {
+  const body = "验收：命令行参数保持 argv-only — no shell";
+  const targets: SyncTarget[] = [
+    { kind: "multica", issueRef: "CERE-9" },
+    { kind: "github", issueRef: "https://github.com/acme/widgets/issues/9" },
+    { kind: "gitea", issueRef: "https://git.example/acme/widgets/issues/9" },
+  ];
+
+  for (const target of targets) {
+    const { cwd, root } = completedItem(target, "非 ASCII 标题", body);
+    const record = onlyRecord(cwd, root);
+    // The bytes live in the file; the argv only points at it, and never at stdin.
+    assert.match(readFileSync(record.bodyFile, "utf8"), /非 ASCII 标题[\s\S]*argv-only/);
+    assert.ok(
+      record.args.some(argument => argument.includes(record.bodyFile)),
+      `${target.kind} passes the body file path`,
+    );
+    assert.ok(
+      record.args.every(argument => !argument.includes(body)),
+      `${target.kind} keeps the body out of the argv`,
+    );
+  }
+});
+
 test("reports corruption instead of dropping an interior record", () => {
   const { cwd, root } = scratch();
   const target = { kind: "multica" as const, issueRef: "CERE-3" };
@@ -187,7 +322,10 @@ test("keys the log by repository root, not by cwd", () => {
 test("validates parameters instead of trusting the host payload", () => {
   assert.throws(() => parseBacklogParams({ action: "nope" }), /action must be one of/);
   assert.throws(() => parseBacklogParams({ action: "enqueue", scope: ["ok", 5] }), /scope must be an array of strings/);
-  assert.throws(() => parseBacklogParams({ action: "enqueue", syncTarget: { kind: "jira", issueRef: "J-1" } }), /must be "multica"/);
+  assert.throws(
+    () => parseBacklogParams({ action: "enqueue", syncTarget: { kind: "jira", issueRef: "J-1" } }),
+    /must be one of multica, gitea, github/,
+  );
   assert.throws(() => parseBacklogParams({ action: "enqueue", syncTarget: { kind: "multica" } }), /issueRef is required/);
   assert.throws(() => parseBacklogParams({ action: "list", state: "bogus" }), /not a known item state/);
 

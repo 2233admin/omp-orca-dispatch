@@ -3,6 +3,8 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import type { HostApi, ToolMetadata, ToolResult } from "./contracts.js";
+import { resolveTracker } from "./trackers/index.js";
+import type { TrackerId } from "./trackers/index.js";
 
 /**
  * Local work backlog and tracker outbox. See docs/offline-backlog-contract.md.
@@ -29,8 +31,11 @@ const LOCK_STALE_MS = 60_000;
 
 export type ItemState = "queued" | "claimed" | "completed" | "synced" | "pending-triage";
 
-/** The only tracker this package knows how to build argv for. */
-export type SyncTarget = { kind: "multica"; issueRef: string };
+/**
+ * A concrete tracker target. `kind` selects the adapter that builds the comment argv; this
+ * module never names a tracker itself, so adding one is a change under src/trackers only.
+ */
+export type SyncTarget = { kind: TrackerId; issueRef: string };
 
 type LogRecord = {
   id: string;
@@ -111,12 +116,12 @@ function optionalSyncTarget(source: Record<string, unknown>): SyncTarget | undef
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("syncTarget must be an object");
   }
-  if (!("kind" in value) || value.kind !== "multica") {
-    throw new Error('syncTarget.kind must be "multica"; no other tracker argv is implemented');
-  }
+  // The registry decides which kinds exist and rejects the rest, so no tracker name is spelled
+  // out here.
+  const adapter = resolveTracker("kind" in value ? value.kind : undefined);
   const issueRef = "issueRef" in value && typeof value.issueRef === "string" ? value.issueRef.trim() : "";
   if (!issueRef) throw new Error("syncTarget.issueRef is required");
-  return { kind: "multica", issueRef };
+  return { kind: adapter.id, issueRef };
 }
 
 /** Validate the host-supplied parameter object instead of asserting its shape. */
@@ -554,15 +559,16 @@ export function planSync(cwd: string, stateRoot = DEFAULT_STATE_ROOT): {
     if (item.state !== "completed" || !item.syncTarget) continue;
     // The body path is produced here, never supplied by a caller.
     const bodyFile = join(tmpdir(), `orca-backlog-${item.id}.md`);
+    // Build the argv before writing the body: an adapter that rejects the reference must not
+    // leave a stray temp file behind.
+    const planned = resolveTracker(item.syncTarget.kind).planComment(item.syncTarget.issueRef, bodyFile);
     writeFileSync(bodyFile, `${item.title}\n\n${item.evidence ?? ""}\n`, "utf8");
     records.push({
       id: item.id,
       issueRef: item.syncTarget.issueRef,
       bodyFile,
-      command: "multica",
-      // --content-file rather than stdin: the tracker CLI documents that stdin mangles
-      // non-ASCII bytes on Windows.
-      args: ["issue", "comment", "add", item.syncTarget.issueRef, "--content-file", bodyFile],
+      command: planned.command,
+      args: planned.args,
     });
   }
 
