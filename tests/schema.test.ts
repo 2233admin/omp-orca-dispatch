@@ -55,13 +55,19 @@ function zodRecorder(): ZodApi {
   };
 }
 
-function host(): HostApi & { definition?: ToolDefinition } {
+/**
+ * Records every registration. Each entrypoint now registers the dispatch tool plus the two
+ * offline tools, so a test must select by name rather than keep the last one registered.
+ */
+function host(): HostApi & { definitions: ToolDefinition[]; definition?: ToolDefinition } {
   return {
+    definitions: [],
     async exec(): Promise<ExecResult> {
       return { code: 0, stdout: "{}", stderr: "" };
     },
     registerTool(definition) {
-      this.definition = definition;
+      this.definitions.push(definition);
+      if (definition.name === "orca_task_dispatch") this.definition = definition;
     },
   };
 }
@@ -98,4 +104,31 @@ test("explicit Pi and OMP entrypoints load and register host-specific metadata",
   assert.equal(omp.definition?.name, "orca_task_dispatch");
   assert.equal(omp.definition?.approval, "write");
   assert.equal(omp.definition?.loadMode, "essential");
+});
+
+test("both entrypoints register the offline tools, not only OMP", async () => {
+  const expected = ["orca_task_dispatch", "orca_backlog", "orca_outbox_sync"];
+
+  const pi = host();
+  const piEntry = await import("../extensions/pi.js");
+  piEntry.default(pi as never);
+  assert.deepEqual(
+    pi.definitions.map(definition => definition.name).sort(),
+    [...expected].sort(),
+    "Pi must not be left without the offline capability",
+  );
+
+  const omp = host();
+  const ompEntry = await import("../extensions/omp.js");
+  ompEntry.default(Object.assign(omp, { zod: zodRecorder() }) as never);
+  assert.deepEqual(omp.definitions.map(definition => definition.name).sort(), [...expected].sort());
+
+  // OMP carries approval/loadMode metadata on every tool it registers; Pi carries none.
+  for (const definition of omp.definitions) {
+    assert.equal(definition.approval, "write");
+    assert.equal(definition.loadMode, "essential");
+  }
+  for (const definition of pi.definitions) {
+    assert.equal(definition.approval, undefined);
+  }
 });

@@ -3,6 +3,40 @@ import { Type } from "typebox";
 export const MIN_SLICES = 2;
 export const MAX_SLICES = 3;
 
+const BACKLOG_ACTIONS = ["enqueue", "claim", "complete", "bind", "ack", "list"] as const;
+const ITEM_STATES = ["queued", "claimed", "completed", "synced", "pending-triage"] as const;
+
+/** Backlog parameters for Pi (TypeBox). Mirrors createOmpBacklogParameters exactly. */
+export function createPiBacklogParameters() {
+  return Type.Object({
+    action: Type.Union(
+      BACKLOG_ACTIONS.map(value => Type.Literal(value)),
+      { description: "enqueue, claim, complete, bind, ack, or list" },
+    ),
+    id: Type.Optional(Type.String({ description: "Item id; required by every action except enqueue and list" })),
+    title: Type.Optional(Type.String({ description: "Work item title; required by enqueue" })),
+    sourceRef: Type.Optional(
+      Type.String({ description: "Opaque traceability label. Never used to build a tracker command" }),
+    ),
+    syncTarget: Type.Optional(
+      Type.Object(
+        { kind: Type.Literal("multica"), issueRef: Type.String() },
+        { description: "Concrete tracker target; only an item with one can be synced" },
+      ),
+    ),
+    scope: Type.Optional(Type.Array(Type.String(), { description: "Repository-relative paths this item owns" })),
+    evidence: Type.Optional(Type.String({ description: "Commits and verification output; required by complete" })),
+    issueRef: Type.Optional(Type.String({ description: "Tracker-returned issue reference; required by ack" })),
+    commentId: Type.Optional(Type.String({ description: "Tracker-returned comment id; required by ack" })),
+    state: Type.Optional(Type.Union(ITEM_STATES.map(value => Type.Literal(value)), { description: "Filter for list" })),
+  });
+}
+
+/** Sync takes no parameters: it plans writes for whatever is completed in this repository. */
+export function createPiSyncParameters() {
+  return Type.Object({});
+}
+
 export function createPiParameters() {
   return Type.Object({
     task: Type.String({ description: "Complete parent task shared by all slices" }),
@@ -46,6 +80,30 @@ export type ZodApi = {
   enum(values: readonly [string, ...string[]]): ZodSchema;
   boolean(): ZodSchema;
 };
+
+/** Backlog parameters for OMP (Zod). Mirrors createPiBacklogParameters exactly. */
+export function createOmpBacklogParameters(z: ZodApi): ZodSchema {
+  return z.object({
+    action: z.enum(BACKLOG_ACTIONS).describe("enqueue, claim, complete, bind, ack, or list"),
+    id: z.string().optional().describe("Item id; required by every action except enqueue and list"),
+    title: z.string().optional().describe("Work item title; required by enqueue"),
+    sourceRef: z.string().optional().describe("Opaque traceability label. Never used to build a tracker command"),
+    syncTarget: z
+      .object({ kind: z.enum(["multica"]), issueRef: z.string() })
+      .optional()
+      .describe("Concrete tracker target; only an item with one can be synced"),
+    scope: z.array(z.string()).optional().describe("Repository-relative paths this item owns"),
+    evidence: z.string().optional().describe("Commits and verification output; required by complete"),
+    issueRef: z.string().optional().describe("Tracker-returned issue reference; required by ack"),
+    commentId: z.string().optional().describe("Tracker-returned comment id; required by ack"),
+    state: z.enum(ITEM_STATES).optional().describe("Filter for list"),
+  });
+}
+
+/** Sync takes no parameters: it plans writes for whatever is completed in this repository. */
+export function createOmpSyncParameters(z: ZodApi): ZodSchema {
+  return z.object({});
+}
 
 export function createOmpParameters(z: ZodApi): ZodSchema {
   return z.object({
