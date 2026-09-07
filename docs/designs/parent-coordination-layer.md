@@ -173,9 +173,13 @@ anything moves.
   schema-invalid, unsupported-version, and out-of-bounds values all produce
   one outcome: the round is `held` with the reason recorded, and neither a
   candidate nor the target is created or mutated.
-- The target advances only by compare-and-set: its tree must be clean, its
-  SHA must still equal the value snapshotted at the start of the attempt, and
-  the candidate must be a descendant of it. Otherwise the target is untouched.
+- The target advances by a guarded, serialized fast-forward, not an atomic
+  primitive. Under the ledger lock, in the recorded parent worktree: require
+  the tree clean, re-read the target SHA, require it to still equal the
+  snapshotted value, then run `git merge --ff-only <candidateSHA>`. Direct
+  `update-ref` is not used because it would desynchronize a checked-out
+  worktree from its index. The merge and the ledger append are not atomic
+  together, so crashes are reconciled by ancestry rather than assumed away.
 - There is exactly one gate run, on the combined tree in the isolated
   integration worktree. Scope is enforced separately and earlier, by diffing
   each member's `baseHead..memberSha` against its recorded owned paths before
@@ -286,12 +290,14 @@ out of scope for this design.
       recovery decidable.
    h. Update the target, then append `merged`.
    Any failure appends `held` with the reason and leaves the target untouched.
-7. Target update is a compare-and-set, not a plain fast-forward: require the
-   target worktree clean, re-read the target SHA, require it to still equal
-   the snapshotted value, and require the candidate to be a descendant of it.
-   Only then move the target to the candidate. A changed target, a dirty tree,
-   or a non-descendant candidate all abort with the target untouched, and the
-   round is `held` so the operator reruns against the new target.
+7. Target update is a guarded, serialized fast-forward. Under the ledger lock,
+   in the recorded parent worktree: require the tree clean, re-read the target
+   SHA, require it to still equal the snapshotted value, require the candidate
+   to be a descendant, then run `git merge --ff-only <candidateSHA>`. Never
+   `update-ref`, which would leave a checked-out worktree out of sync with its
+   index. A changed target, a dirty tree, or a non-descendant candidate abort
+   with the target untouched and the round `held`, so the operator reruns
+   against the new target.
 8. Recovery path: reconcile the ledger against git ancestry on startup. An
    `attempt` with no outcome record is decided by testing its recorded
    candidate SHA against the target's ancestry: if the target contains that
