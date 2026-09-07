@@ -1,27 +1,20 @@
-import type {
-  ExecResult,
-  HostApi,
-  SetupMode,
-  TaskDispatchParams,
-  TaskSlice,
-  ToolMetadata,
-  ToolResult,
-} from "./contracts.js";
+import type { SetupMode, TaskDispatchParams, TaskSlice, ToolMetadata, ToolResult, HostApi } from "./contracts.js";
+import { WORKTREE_BACKENDS } from "./backends/index.js";
+import type { BackendRuntime, ChildRequest, DispatchBackend } from "./backends/types.js";
+import { DISPATCH_COMMENT_PREFIX, redact, text, truncate } from "./backends/support.js";
 import { MAX_SLICES, MIN_SLICES } from "./schema.js";
 
-const ORCA_TIMEOUT_MS = 30_000;
-const CREATE_TIMEOUT_MS = 120_000;
 const MAX_TASK_CHARS = 7_000;
 const MAX_NAME_CHARS = 48;
 const MAX_SOURCE_REF_CHARS = 200;
 const MAX_SCOPE_CHARS = 240;
-const DISPATCH_COMMENT_PREFIX = "Orca task dispatch";
 const VALID_SETUP: Record<string, true> = { skip: true, run: true, inherit: true };
 const VALID_AGENT = /^[A-Za-z0-9._-]{1,48}$/;
 
-type JsonObject = Record<string, unknown>;
+export { redact };
 
 type ValidatedDispatch = {
+  backend: DispatchBackend;
   task: string;
   sourceRef?: string;
   slices: TaskSlice[];
@@ -30,64 +23,8 @@ type ValidatedDispatch = {
   dryRun: boolean;
 };
 
-type WorktreeContext = {
-  repoId: string;
-  worktreeId: string;
-  head: string;
-};
-
-type Plan = {
-  name: string;
-  prompt: string;
-  args: string[];
-  slice: TaskSlice;
-};
-
-function text(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : `${value.slice(0, limit)}\n[truncated by dispatcher]`;
-}
-
-export function redact(value: string): string {
-  return value.replace(/(https?:\/\/)([^/@\s]+)@/gi, "$1[redacted]@");
-}
-
-function isObject(value: unknown): value is JsonObject {
+function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function requireObject(value: unknown, label: string): JsonObject {
-  if (!isObject(value)) throw new Error(`${label} is not a JSON object`);
-  return value;
-}
-
-function parseJson(raw: string, label: string): JsonObject {
-  try {
-    return requireObject(JSON.parse(raw), label);
-  } catch (error) {
-    throw new Error(`${label} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-function commandFailure(label: string, execution: ExecResult): Error {
-  const output = redact([execution.stderr, execution.stdout].filter(Boolean).join("\n").trim());
-  return new Error(`${label} failed with exit code ${execution.code}${output ? `: ${truncate(output, 2_000)}` : ""}`);
-}
-
-async function execJson(
-  pi: HostApi,
-  command: string,
-  args: string[],
-  cwd: string,
-  signal?: AbortSignal,
-  timeout = ORCA_TIMEOUT_MS,
-): Promise<JsonObject> {
-  const execution = await pi.exec(command, args, { cwd, ...(signal ? { signal } : {}), timeout });
-  if (execution.code !== 0) throw commandFailure(`${command} ${args.slice(0, 2).join(" ")}`, execution);
-  return parseJson(execution.stdout, command);
 }
 
 function result(details: Record<string, unknown>): ToolResult {
@@ -132,7 +69,7 @@ function validateScope(value: unknown, sliceName: string): string {
   }
   const scope = rawScope.trim().replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
   if (!scope || scope === ".") throw new Error(`Slice ${sliceName} has an empty or repository-root scope`);
-  if (scope.length > MAX_SCOPE_CHARS || /[*?\[\]<>:"|]/.test(scope)) {
+  if (scope.length > MAX_SCOPE_CHARS || /[*?[\]<>:"|]/.test(scope)) {
     throw new Error(`Slice ${sliceName} scope must be a portable literal path of at most ${MAX_SCOPE_CHARS} characters`);
   }
   if (scope.startsWith("/") || /^[A-Za-z]:/.test(scope)) {
@@ -158,6 +95,14 @@ function validateAgent(value: unknown): string {
     throw new Error("agent must be a configured Orca agent selector containing only ASCII letters, digits, dot, underscore, or hyphen");
   }
   return agent;
+}
+
+function validateBackend(value: unknown): DispatchBackend {
+  const backend = text(value) || text(process.env.ORCA_DISPATCH_BACKEND) || "orca";
+  if (!Object.hasOwn(WORKTREE_BACKENDS, backend)) {
+    throw new Error(`backend must be one of ${Object.keys(WORKTREE_BACKENDS).join(", ")}`);
+  }
+  return backend as DispatchBackend;
 }
 
 export function validateTaskDispatch(params: TaskDispatchParams): ValidatedDispatch {
@@ -198,6 +143,7 @@ export function validateTaskDispatch(params: TaskDispatchParams): ValidatedDispa
   if (!VALID_SETUP[setup]) throw new Error("setup must be skip, run, or inherit");
   const sourceRef = validateSourceRef(params.sourceRef);
   return {
+    backend: validateBackend("backend" in params ? params.backend : undefined),
     task,
     ...(sourceRef ? { sourceRef } : {}),
     slices,
@@ -241,73 +187,17 @@ export function buildSlicePrompt(
   return sections.join("\n");
 }
 
-async function loadContext(pi: HostApi, command: string, cwd: string, signal?: AbortSignal): Promise<WorktreeContext> {
-  const status = await execJson(pi, command, ["status", "--json"], cwd, signal);
-  const runtime = requireObject(requireObject(status.result, "Orca status result").runtime, "Orca runtime status");
-  if (status.ok !== true || runtime.state !== "ready" || runtime.reachable !== true) {
-    throw new Error("Orca runtime is not ready and reachable");
-  }
-  const envelope = await execJson(pi, command, ["worktree", "current", "--json"], cwd, signal);
-  if (envelope.ok !== true) throw new Error("Orca rejected the current-worktree request");
-  const current = requireObject(requireObject(envelope.result, "Orca result").worktree, "Orca current worktree");
-  if (text(current.comment).startsWith(DISPATCH_COMMENT_PREFIX)) {
-    throw new Error("Refusing recursive dispatch from a dispatcher-created worktree");
-  }
-  const repoId = text(current.repoId);
-  const worktreeId = text(current.id);
-  const head = text(current.head);
-  if (!repoId || !worktreeId || !head) throw new Error("Current Orca worktree lacks repoId, id, or head");
-  return { repoId, worktreeId, head };
-}
-
-function buildPlans(params: ValidatedDispatch, context: WorktreeContext): Plan[] {
-  return params.slices.map((slice, index) => {
-    const prompt = buildSlicePrompt(params.task, params.sourceRef, slice, index, params.slices.length);
-    const comment = [DISPATCH_COMMENT_PREFIX, params.sourceRef, `slice ${index + 1}/${params.slices.length}`]
+function buildRequests(params: ValidatedDispatch): ChildRequest[] {
+  return params.slices.map((slice, index) => ({
+    name: slice.name,
+    prompt: buildSlicePrompt(params.task, params.sourceRef, slice, index, params.slices.length),
+    comment: [DISPATCH_COMMENT_PREFIX, params.sourceRef, `slice ${index + 1}/${params.slices.length}`]
       .filter(Boolean)
-      .join(" | ");
-    return {
-      name: slice.name,
-      prompt,
-      slice,
-      args: [
-        "worktree",
-        "create",
-        "--repo",
-        `id:${context.repoId}`,
-        "--name",
-        slice.name,
-        "--agent",
-        params.agent,
-        "--prompt",
-        prompt,
-        "--setup",
-        params.setup,
-        "--base-branch",
-        context.head,
-        "--comment",
-        comment,
-        "--parent-worktree",
-        `id:${context.worktreeId}`,
-        "--json",
-      ],
-    };
-  });
-}
-
-function createdWorktree(envelope: JsonObject, plan: Plan) {
-  if (envelope.ok !== true) throw new Error("Orca rejected the worktree creation request");
-  const created = requireObject(envelope.result, "Orca create result");
-  const worktree = isObject(created.worktree) ? created.worktree : {};
-  const terminal = isObject(created.startupTerminal) ? created.startupTerminal : {};
-  return {
-    name: plan.name,
-    status: "dispatched",
-    worktreeId: text(worktree.id) || text(created.worktreeId) || null,
-    worktreePath: text(worktree.path) || text(created.path) || null,
-    agentTerminalHandle: text(created.agentTerminalHandle) || text(terminal.handle) || null,
-    scope: plan.slice.scope,
-  };
+      .join(" | "),
+    agent: params.agent,
+    setup: params.setup,
+    slice,
+  }));
 }
 
 export function registerOrcaTaskDispatch(pi: HostApi, parameters: unknown, metadata: ToolMetadata = {}): void {
@@ -321,11 +211,16 @@ export function registerOrcaTaskDispatch(pi: HostApi, parameters: unknown, metad
     async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       try {
         const params = validateTaskDispatch(rawParams);
-        const cwd = text(ctx?.cwd) || process.cwd();
-        const command = text(process.env.ORCA_CLI_COMMAND) || "orca";
-        const context = await loadContext(pi, command, cwd, signal);
-        const plans = buildPlans(params, context);
+        const backend = WORKTREE_BACKENDS[params.backend];
+        const runtime: BackendRuntime = {
+          pi,
+          cwd: text(ctx?.cwd) || process.cwd(),
+          ...(signal ? { signal } : {}),
+        };
+        const context = await backend.loadContext(runtime, params.slices);
+        const requests = buildRequests(params);
         const common = {
+          backend: backend.id,
           sourceRef: params.sourceRef ?? null,
           parentTask: params.task,
           parentWorktreeId: context.worktreeId,
@@ -336,30 +231,48 @@ export function registerOrcaTaskDispatch(pi: HostApi, parameters: unknown, metad
           return result({
             status: "dry-run",
             ...common,
-            slices: plans.map((plan) => ({
-              name: plan.name,
-              scope: plan.slice.scope,
-              promptPreview: truncate(plan.prompt, 1_200),
-              plannedCommand: {
-                command,
-                args: plan.args.map((arg) => (arg === plan.prompt ? `<prompt ${plan.prompt.length} chars>` : arg)),
-              },
-            })),
+            slices: requests.map((request) => {
+              const [primary, ...followUps] = backend.planChild(request, context);
+              const mask = (args: string[]) =>
+                args.map((arg) => (arg === request.prompt ? `<prompt ${request.prompt.length} chars>` : arg));
+              return {
+                name: request.name,
+                scope: request.slice.scope,
+                promptPreview: truncate(request.prompt, 1_200),
+                ...(primary ? { plannedCommand: { command: primary.command, args: mask(primary.args) } } : {}),
+                ...(followUps.length > 0
+                  ? {
+                      plannedFollowUpCommands: followUps.map((plan) => ({
+                        command: plan.command,
+                        args: mask(plan.args),
+                      })),
+                    }
+                  : {}),
+              };
+            }),
           });
         }
 
         const slices = await Promise.all(
-          plans.map(async (plan) => {
+          requests.map(async (request) => {
             try {
-              const envelope = await execJson(pi, command, plan.args, cwd, signal, CREATE_TIMEOUT_MS);
-              return createdWorktree(envelope, plan);
+              const created = await backend.createChild(request, context, runtime);
+              return {
+                name: request.name,
+                status: "dispatched",
+                worktreeId: created.worktreeId,
+                worktreePath: created.worktreePath,
+                agentTerminalHandle: created.agentTerminalHandle,
+                scope: request.slice.scope,
+                ...(created.extra ?? {}),
+              };
             } catch (error) {
               return {
-                name: plan.name,
+                name: request.name,
                 status: "failed",
                 message: redact(error instanceof Error ? error.message : String(error)),
                 possiblePartialCreate: true,
-                scope: plan.slice.scope,
+                scope: request.slice.scope,
               };
             }
           }),
