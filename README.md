@@ -4,18 +4,29 @@ Portable Pi and Oh My Pi extension for safe parallel dispatch into Orca-managed 
 
 ## Install, diagnose, and use
 
-OMP:
+> **The published-package route does not work yet.** `omp-orca-dispatch` is not on the public
+> npm registry — `npx --yes omp-orca-dispatch@0.1.0 …` fails with `E404`. Install from a
+> checkout until a registry publish lands.
+
+From a checkout:
 ```sh
-npx --yes omp-orca-dispatch@0.1.0 install --host omp
-npx --yes omp-orca-dispatch@0.1.0 doctor --host omp
+git clone https://github.com/2233admin/omp-orca-dispatch.git
+cd omp-orca-dispatch
+npm ci
+npm run build
+node bin/orca-task-dispatch.mjs install --host omp --path .   # links this checkout
+node bin/orca-task-dispatch.mjs doctor  --host omp
 omp
 ```
 
-Pi:
+`--path` links the checkout through `omp plugin install <dir>`. It is verified for `--host omp`
+only; Pi's directory-install syntax is unverified, so `--host pi --path` is refused rather than
+guessed. Pi therefore needs a published package.
+
+Once published, the same commands are available without a checkout:
 ```sh
-npx --yes omp-orca-dispatch@0.1.0 install --host pi
-npx --yes omp-orca-dispatch@0.1.0 doctor --host pi
-pi
+npx --yes omp-orca-dispatch@<version> install --host omp
+npx --yes omp-orca-dispatch@<version> doctor  --host omp
 ```
 
 Then ask the host to call `orca_task_dispatch` with 2–3 slices:
