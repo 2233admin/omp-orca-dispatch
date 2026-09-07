@@ -17,5 +17,45 @@ export {
   safeWorktreeName,
   validateTaskDispatch,
 } from "./dispatcher.js";
+export type { DispatchAction } from "./dispatcher.js";
+export {
+  beginRound,
+  canonicalJson,
+  collectRounds,
+  defaultStateRoot,
+  GATE_POLICY_RELATIVE_PATH,
+  guardedFastForward,
+  integrateRound,
+  ledgerKey,
+  ledgerPaths,
+  normalizeIdentity,
+  readLedger,
+  recordDispatchOutcome,
+  replayLedger,
+  resolveGatePolicy,
+  resolveParentWorktreePath,
+  validateRoundId,
+} from "./ledger.js";
+export type {
+  AttemptState,
+  BeginRoundInput,
+  CollectMember,
+  CollectOptions,
+  CollectResult,
+  CollectRound,
+  DispatchedMember,
+  DispatchOutcomeInput,
+  Gate,
+  GateOutcome,
+  GatePolicy,
+  GatePolicyResolution,
+  IntegrateOptions,
+  IntegrateResult,
+  LedgerLocation,
+  LedgerPaths,
+  ObservedMember,
+  RequestedMember,
+  RoundState,
+} from "./ledger.js";
 export { createOmpParameters, createPiParameters, MAX_SLICES, MIN_SLICES } from "./schema.js";
 export type { ZodApi, ZodSchema } from "./schema.js";

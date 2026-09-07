@@ -23,6 +23,21 @@ All notable changes are documented here. This project follows Semantic Versionin
 - `docs/tracker-adapters.md` documenting the adapter contract, the argv each of the three
   adapters emits, the checked upstream flag support, the plan-not-execute and credential
   boundaries, and how to add a fourth adapter.
+- Parent coordination layer: dispatch now writes an append-only JSONL ledger with its own store,
+  schema, and replay in `src/ledger.ts`, recording the round's complete member set before any
+  child is created, so a partial dispatch cannot shrink the round. `collect` is pure inspection
+  and appends nothing, resolves no gate policy, and moves no branch. `integrate` takes a round
+  id, snapshots every member SHA, enforces each member's recorded scope before merging, gates the
+  combined tree once in an isolated integration worktree under the parent-owned policy at
+  `.orca-task-dispatch/gates.json`, persists the candidate and target SHAs before touching the
+  target, and then advances it by a guarded, serialized `git merge --ff-only`. Anything else
+  holds the whole round with the target unchanged; a held round is terminal and is recovered by a
+  superseding round. Only the parent writes the ledger, and no child receives its path.
+- `docs/parent-coordination.md` documenting what dispatch records, what `collect` shows and that
+  it changes nothing, the exact ordered `integrate` steps with the conditions for an automatic
+  merge versus a held round, the `.orca-task-dispatch/gates.json` format, why a held round is
+  terminal, crash recovery by ancestry, and the precondition that `collect` and `integrate` run
+  from the parent worktree that dispatched.
 
 ## [0.1.0] - 2026-09-04
 
