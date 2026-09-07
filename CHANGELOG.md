@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- Selectable worktree backend for `orca_task_dispatch`: the optional `backend` parameter accepts
+  `orca` or `git-worktree`, falls back to `ORCA_DISPATCH_BACKEND`, and defaults to `orca`, so
+  omitting it preserves the existing behavior. The `git-worktree` backend needs only `git` and
+  refuses a slice scope containing uncommitted changes, because siblings branch from the
+  committed HEAD.
+- `docs/worktree-backends.md` documenting why the backend seam exists, the selection contract,
+  the guarantees both backends preserve, and the git backend's extra precondition.
+
 ## [0.1.0] - 2026-09-04
 
 ### Added
