@@ -50,10 +50,23 @@ The command creates siblings concurrently from the parent worktree's exact commi
 | Node.js | 22.19.0 | Runs the package CLI and tests |
 | Pi | 0.84.4 | Loads the Pi TypeBox entrypoint |
 | Oh My Pi | 18.1.8 | Loads the OMP Zod entrypoint |
-| Orca | 1.4.195 | Must be running, ready, and reachable |
+| Orca | 1.4.195 | Must be running, ready, and reachable; required by the `orca` backend only |
 | OS | Windows, Linux, macOS | Scope validation follows the strict common path subset |
 
 Run `orca-task-dispatch doctor --host pi|omp` after upgrades. `doctor --json` emits stable machine-readable checks and exits nonzero when any required check fails.
+
+## Backends
+
+Dispatch needs the parent's exact committed HEAD and a way to create siblings from it. Two
+backends supply that: `orca`, which requires a running, ready, and reachable Orca runtime, and
+`git-worktree`, which needs only `git` and makes the package usable outside an Orca fleet. Select
+one with the optional `backend` parameter or the `ORCA_DISPATCH_BACKEND` environment variable.
+
+`orca` remains the default, so omitting `backend` changes nothing for existing users. Both
+backends preserve the same guarantees — 2–3 slices, scope validation, exact committed HEAD,
+recursion refusal, argv-only execution, and no auto-merge. See
+[worktree backends](docs/worktree-backends.md) for the selection contract and the git backend's
+extra precondition on uncommitted changes.
 
 ## Installation CLI
 
