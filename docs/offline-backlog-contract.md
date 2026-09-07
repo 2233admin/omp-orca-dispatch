@@ -1,7 +1,8 @@
 # Offline backlog and outbox contract
 
-Status: implemented in `src/offline.ts`, registered by both host entrypoints. No code in
-`src/dispatcher.ts` changed for this feature.
+Status: implemented in `src/offline.ts`, registered by both host entrypoints, with the
+tracker-facing argv supplied by the adapters in `src/trackers/`. No code in `src/dispatcher.ts`
+changed for this feature.
 
 ## Why a separate module
 
@@ -69,8 +70,10 @@ For each completed item:
 
 1. No explicit `syncTarget` → leave it `pending-triage` and report it. Never guess a reference.
 2. Otherwise emit a **sync record**: the issue reference, the comment body written to a UTF-8
-   temp file, and the exact argv to run — for Multica,
-   `["issue", "comment", "add", "<ref>", "--content-file", "<path>"]`.
+   temp file, and the exact argv to run. The argv comes from the tracker adapter selected by
+   `syncTarget.kind` — for Multica,
+   `["issue", "comment", "add", "<ref>", "--content-file", "<path>"]`. This module names no
+   tracker itself; see `docs/tracker-adapters.md`.
 3. Return every sync record plus a reachability observation. Nothing is marked synced yet.
 
 The host or agent executes the argv with whatever credentials it already holds, then calls
@@ -118,9 +121,13 @@ parsed and never used to build a command — feeding a Jira URL to `multica issu
 would produce a broken invocation.
 
 A tracker write therefore requires a separate, explicitly typed `syncTarget`:
-`{ kind: "multica", issueRef }`. Any other `kind` is rejected, because no other tracker's argv is
-implemented. An item may carry a `sourceRef` for provenance, a `syncTarget` for writing, both, or
-neither.
+`{ kind, issueRef }`, where `kind` is one of `multica`, `gitea`, or `github` and selects the
+tracker adapter that builds the argv (`docs/tracker-adapters.md`). `issueRef` must be a reference
+that the selected tracker's CLI accepts; it is substituted into one argv slot and never parsed.
+Any other `kind` is rejected rather than guessed, because no adapter is registered for it — the
+same reason `sourceRef` is never promoted into a target. Both host schemas in `src/schema.ts`
+declare the same set, so Pi and OMP accept identical targets. An item may carry a `sourceRef` for
+provenance, a `syncTarget` for writing, both, or neither.
 
 ## Reachability
 
@@ -174,9 +181,10 @@ have. Items without an explicit `syncTarget` surface as `pending-triage`.
 
 - Every CLI invocation goes through `HostApi.exec(command, args, options)` with an argv array.
   Task text, scope entries, and `sourceRef` are never interpolated into a shell string.
-- Non-ASCII comment bodies are written to a UTF-8 file and passed with the tracker CLI's
-  `--content-file` flag. The Multica CLI documents that stdin piping mangles non-ASCII bytes on
-  Windows, and fleet content is largely Chinese.
+- Comment bodies are always written to a UTF-8 file and passed by path: `--content-file` for
+  Multica, `--body-file` for `gh`, `--variable body@<file>` for the Gitea API call. The Multica
+  CLI documents that stdin piping mangles non-ASCII bytes on Windows, and fleet content is
+  largely Chinese, so no adapter may use stdin or inline a body into argv.
 - Timeouts and abort signals follow the existing dispatcher constants.
 
 ## Host parity
