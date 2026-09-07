@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
 import { after, test } from "node:test";
 
-import { parseBacklogParams, planSync, runBacklog } from "../src/offline.js";
+import { parseBacklogParams, planSync, probeTracker, runBacklog } from "../src/offline.js";
 
 const scratchRoots: string[] = [];
 
@@ -193,4 +194,29 @@ test("validates parameters instead of trusting the host payload", () => {
   const parsed = parseBacklogParams({ action: "enqueue", title: "  padded  ", sourceRef: "   " });
   assert.equal(parsed.title, "padded");
   assert.equal(parsed.sourceRef, undefined, "a blank string is absent, not an empty reference");
+});
+
+test("treats any HTTP response as reachable and no response as unreachable", async () => {
+  const server = createServer((_request, response) => {
+    // 401 is the observed healthy-but-unauthenticated case; it must count as reachable.
+    response.writeHead(401).end();
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const up = await probeTracker(`http://127.0.0.1:${port}`);
+    assert.equal(up.reachable, true);
+    assert.equal(up.status, 401);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+
+  // A closed port yields no HTTP response at all, which is the unreachable case. A TCP-level
+  // probe would be insufficient here: a fleet host once accepted TCP while HTTP returned nothing.
+  const down = await probeTracker(`http://127.0.0.1:${port}`, 2_000);
+  assert.equal(down.reachable, false);
+  assert.equal(down.status, 0);
+  assert.ok(down.detail.length > 0, "the failure reason is reported rather than swallowed");
 });

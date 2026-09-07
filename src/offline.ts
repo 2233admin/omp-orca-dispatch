@@ -545,20 +545,22 @@ export function registerOfflineTools(
       "without a syncTarget are reported as pending-triage and never auto-filed.",
     parameters: syncParameters,
     ...metadata,
-    async execute(_toolCallId, params, _signal, _onUpdate, context) {
+    async execute(_toolCallId, _params, _signal, _onUpdate, context) {
       const plan = planSync(context.cwd ?? process.cwd(), stateRoot);
-      const trackerUrl =
-        params !== null && typeof params === "object" && "trackerUrl" in params && typeof params.trackerUrl === "string"
-          ? params.trackerUrl.trim()
-          : "";
-      // Probed only when a base URL is supplied; the plan itself is produced either way so a
-      // caller can queue work without any network access.
-      const reachability = trackerUrl ? await probeTracker(trackerUrl) : null;
+      // Read only from the environment. A caller-supplied URL would let a model point this probe
+      // at an arbitrary host, turning the tool into an SSRF primitive against the internal
+      // network; the operator configures the endpoint instead. Only a base URL is ever read
+      // here — never a token, which stays outside this package entirely.
+      const trackerUrl = (process.env.MULTICA_SERVER_URL ?? "").trim();
+      // The plan is produced either way, so work can be queued with no network at all.
+      const reachability = trackerUrl
+        ? await probeTracker(trackerUrl)
+        : { reachable: false, status: 0, detail: "MULTICA_SERVER_URL is unset; reachability not probed" };
       return asResult({
         records: plan.records,
         pendingTriage: plan.pendingTriage,
         reachability,
-        note: reachability?.reachable === false
+        note: reachability.reachable === false
           ? "Tracker unreachable: leave every item queued and retry later."
           : "Run each record's argv, then call orca_backlog ack with the returned issue and comment ids.",
       });

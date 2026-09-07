@@ -32,7 +32,10 @@ export function createPiBacklogParameters() {
   });
 }
 
-/** Sync takes no parameters: it plans writes for whatever is completed in this repository. */
+/**
+ * Sync takes no parameters. The tracker endpoint comes from MULTICA_SERVER_URL rather than a
+ * tool argument: a caller-supplied URL would let a model aim the reachability probe at any host.
+ */
 export function createPiSyncParameters() {
   return Type.Object({});
 }
@@ -100,7 +103,10 @@ export function createOmpBacklogParameters(z: ZodApi): ZodSchema {
   });
 }
 
-/** Sync takes no parameters: it plans writes for whatever is completed in this repository. */
+/**
+ * Sync takes no parameters. The tracker endpoint comes from MULTICA_SERVER_URL rather than a
+ * tool argument: a caller-supplied URL would let a model aim the reachability probe at any host.
+ */
 export function createOmpSyncParameters(z: ZodApi): ZodSchema {
   return z.object({});
 }

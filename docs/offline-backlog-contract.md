@@ -132,8 +132,10 @@ same service returned `401`.
   merely wants credentials.
 - No HTTP response (`000`, connect refused, timeout) means **unreachable**.
 
-Implemented as `probeTracker(baseUrl)`. `orca_outbox_sync` probes only when the caller supplies
-`trackerUrl`; the plan is produced either way, so items can be queued with no network at all.
+Implemented as `probeTracker(baseUrl)`. `orca_outbox_sync` reads the endpoint from `MULTICA_SERVER_URL` only. It is
+deliberately not a tool parameter: a caller-supplied URL would let a model aim the probe at an
+arbitrary internal host, making the tool an SSRF primitive. Only a base URL is ever read, never
+a token. The plan is produced either way, so items can be queued with no network at all.
 
 ## Proxy hygiene
 
@@ -152,7 +154,7 @@ written in a form the callee's HTTP stack understands.
 The module never creates tickets. Duplicate suppression belongs to the tracker — the Multica
 CLI's `issue create` already refuses an active duplicate unless `--allow-duplicate` is passed —
 and deciding whether an item deserves a ticket needs semantic judgement this module does not
-have. Items without an explicit `sourceRef` surface as `pending-triage`.
+have. Items without an explicit `syncTarget` surface as `pending-triage`.
 
 ## Execution rules
 
@@ -177,7 +179,7 @@ tests must assert both registrations, matching how the dispatch tool is already 
 ## State machine and locking
 
 Item states: `queued → claimed → completed → synced`, plus the terminal-until-triaged
-`pending-triage` for a completed item that carries no `sourceRef`.
+`pending-triage` for a completed item that carries no `syncTarget`.
 
 The log is append-only; current state is the **last record for that item id** after a full
 replay. `claim` and `complete` append a new record instead of rewriting an earlier one, so a
