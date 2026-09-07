@@ -451,21 +451,82 @@ export function runBacklog(params: BacklogParams, cwd: string, stateRoot = DEFAU
 
 export type Reachability = { reachable: boolean; status: number; detail: string };
 
+/** Only these two schemes describe something an HTTP probe can meaningfully reach. */
+const PROBE_PROTOCOLS: Record<string, true> = { "http:": true, "https:": true };
+
+/**
+ * Link-local space: IPv4 169.254.0.0/16 (RFC 3927) and IPv6 fe80::/10 (RFC 4291).
+ * 169.254.169.254 is the instance-metadata endpoint on AWS, GCP, and Azure, so an operator
+ * misconfiguration of MULTICA_SERVER_URL would otherwise turn the probe into an SSRF primitive
+ * aimed at credential-bearing metadata. The whole prefix is refused, not just that one address:
+ * the neighbouring addresses are autoconfiguration space, never a tracker.
+ */
+function isLinkLocalHost(hostname: string): boolean {
+  // URL.hostname is lowercased but keeps the brackets around an IPv6 literal, which would
+  // defeat an anchored prefix match, so they are removed first.
+  const host = hostname.replace(/^\[|\]$/g, "");
+  const dotted = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host);
+  if (dotted) {
+    const octets = (dotted[1] ?? "").split(".").map(Number);
+    if (octets[0] === 169 && octets[1] === 254) return true;
+  }
+  // fe80:: through febf:: — the /10 prefix.
+  if (/^fe[89ab][0-9a-f]:/.test(host)) return true;
+  // An IPv4-mapped literal is normalised to hex, so ::ffff:169.254.169.254 arrives as
+  // ::ffff:a9fe:a9fe and the dotted test above never sees it.
+  if (/(?:^|:)a9fe:[0-9a-f]{1,4}$/.test(host)) return true;
+  return false;
+}
+
+type EndpointCheck = { ok: true; url: URL } | { ok: false; detail: string };
+
+/**
+ * Validate before connecting. A refusal is reported as unreachable rather than thrown: the
+ * caller's contract is that a plan is produced either way, so a bad endpoint must degrade the
+ * reachability field, not fail the sync tool. The raw value is never echoed — it may carry
+ * userinfo credentials — only its scheme and host.
+ */
+function checkEndpoint(baseUrl: string): EndpointCheck {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return { ok: false, detail: "MULTICA_SERVER_URL is not a valid absolute URL; reachability not probed" };
+  }
+  const scheme = url.protocol.replace(/:$/, "");
+  if (!PROBE_PROTOCOLS[url.protocol]) {
+    return { ok: false, detail: `MULTICA_SERVER_URL uses unsupported scheme "${scheme}"; only http and https are probed` };
+  }
+  if (isLinkLocalHost(url.hostname)) {
+    return {
+      ok: false,
+      detail: `MULTICA_SERVER_URL points at link-local host ${url.hostname}; 169.254.0.0/16 and fe80::/10 hold cloud instance metadata and are never probed`,
+    };
+  }
+  return { ok: true, url };
+}
+
 /**
  * Probe the tracker with a real HTTP request. A TCP connect test is not sufficient: on one fleet
  * host the mesh address accepted a TCP connection while HTTP returned nothing, whereas the LAN
  * address answered 401. Any HTTP status — including 401 — means the service is up and merely
  * wants credentials; no response at all means unreachable.
  *
+ * The endpoint is validated before any connection is opened: a non-HTTP scheme or a link-local
+ * host is refused as unreachable, never fetched.
+ *
  * The ambient proxy is bypassed deliberately. An observed outage was caused by `NO_PROXY`
  * holding the shell-style wildcard `192.168.*`, which Go's proxy resolver ignores, sending an
  * internal address to a proxy port with no listener.
  */
 export async function probeTracker(baseUrl: string, timeoutMs = 5_000): Promise<Reachability> {
+  const endpoint = checkEndpoint(baseUrl);
+  if (!endpoint.ok) return { reachable: false, status: 0, detail: endpoint.detail };
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(new URL("/api/daemon/workspaces", baseUrl), {
+    const response = await fetch(new URL("/api/daemon/workspaces", endpoint.url), {
       method: "GET",
       signal: controller.signal,
       // Undici honours no-proxy semantics per-request; an internal address must not be proxied.

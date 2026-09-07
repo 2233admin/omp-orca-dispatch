@@ -220,3 +220,43 @@ test("treats any HTTP response as reachable and no response as unreachable", asy
   assert.equal(down.status, 0);
   assert.ok(down.detail.length > 0, "the failure reason is reported rather than swallowed");
 });
+
+test("refuses unsafe tracker endpoints and still probes a normal loopback URL", async () => {
+  // A scheme no HTTP probe can reach. Reported, never thrown: the sync plan must still be
+  // produced when the endpoint is misconfigured.
+  for (const bad of ["file:///etc/passwd", "ftp://tracker.internal:21", "not-a-url"]) {
+    const refused = await probeTracker(bad);
+    assert.equal(refused.reachable, false, `${bad} must not be reachable`);
+    assert.equal(refused.status, 0);
+    assert.match(refused.detail, /unsupported scheme|not a valid absolute URL/);
+  }
+
+  // Link-local space holds the cloud instance-metadata endpoint; an operator typo in
+  // MULTICA_SERVER_URL must not turn the probe into an SSRF vector against it.
+  for (const linkLocal of [
+    "http://169.254.169.254/latest/meta-data/",
+    "http://169.254.0.1:3010",
+    "http://[fe80::1]:3010",
+    "http://[::ffff:169.254.169.254]:3010",
+  ]) {
+    const refused = await probeTracker(linkLocal);
+    assert.equal(refused.reachable, false, `${linkLocal} must not be reachable`);
+    assert.equal(refused.status, 0);
+    assert.match(refused.detail, /link-local/);
+  }
+
+  // The guard must not break the ordinary case: a loopback tracker is still probed for real.
+  const server = createServer((_request, response) => {
+    response.writeHead(401).end();
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  try {
+    const up = await probeTracker(`http://127.0.0.1:${port}`);
+    assert.equal(up.reachable, true, "a loopback tracker is not link-local and must be probed");
+    assert.equal(up.status, 401);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
