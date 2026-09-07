@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -44,6 +45,59 @@ test("builds official host commands as argv arrays with local behavior", () => {
   });
 });
 
+test("links a checkout directory when --path is given", () => {
+  const checkout = fileURLToPath(new URL("..", import.meta.url));
+
+  const parsed = parseArguments(["install", "--path", checkout]);
+  assert.equal(parsed.packagePath, checkout);
+  assert.equal(parsed.local, false);
+  assert.equal(parseArguments(["install", `--path=${checkout}`]).packagePath, checkout);
+
+  // Verified against `omp plugin install <dir>`, which links the directory.
+  const action = createHostAction("install", "omp", false, checkout);
+  assert.equal(action.command, "omp");
+  assert.deepEqual(action.args.slice(0, 2), ["plugin", "install"]);
+  assert.ok(isAbsolute(action.args[2] ?? ""), "the directory is resolved to an absolute path");
+
+  // Pi's directory-install syntax is unverified, so a guessed argv is refused.
+  assert.throws(() => createHostAction("install", "pi", false, checkout), /only by --host omp/);
+  // Uninstall removes by plugin name, so a source path cannot apply even at the argv layer.
+  assert.throws(() => createHostAction("uninstall", "omp", false, checkout), /only supported by install/);
+
+  assert.throws(() => parseArguments(["uninstall", "--path", checkout]), /only supported by install/);
+  assert.throws(() => parseArguments(["install", "--path", checkout, "--local"]), /mutually exclusive/);
+  assert.throws(() => parseArguments(["install", "--path"]), /--path requires a directory/);
+
+  // A path that is not an installable package is refused rather than passed to the host.
+  const missing = join(checkout, "does-not-exist-6f3a");
+  assert.throws(() => createHostAction("install", "omp", false, missing), /not an installable package/);
+});
+
+test("main threads --path through to the host action", async () => {
+  const checkout = fileURLToPath(new URL("..", import.meta.url));
+  /** @type {string[]} */
+  const out: string[] = [];
+  const code = await main(["install", "--host", "omp", "--path", checkout, "--dry-run"], {
+    stdout: (text: string) => out.push(text),
+    stderr: () => {},
+  });
+
+  assert.equal(code, 0);
+  // The regression this guards: main() previously dropped packagePath, so --path was
+  // silently ignored and the npm package name was emitted instead of the directory.
+  const emitted = JSON.parse(out.join(""));
+  assert.deepEqual(emitted.action.args.slice(0, 2), ["plugin", "install"]);
+  assert.ok(isAbsolute(emitted.action.args[2]), "the linked directory reaches the host action");
+  assert.ok(!emitted.action.args.some((arg: string) => arg.includes("@0.1.0")), "no package specifier");
+
+  const errors: string[] = [];
+  const rejected = await main(["install", "--host", "omp", "--path", join(checkout, "nope-9d2f"), "--dry-run"], {
+    stdout: () => {},
+    stderr: (text: string) => errors.push(text),
+  });
+  assert.notEqual(rejected, 0);
+  assert.match(errors.join(""), /not an installable package/);
+});
 test("parses only supported command and flag combinations", () => {
   assert.deepEqual(parseArguments(["install", "--host", "pi", "--local", "--dry-run"]), {
     command: "install",
@@ -51,6 +105,7 @@ test("parses only supported command and flag combinations", () => {
     local: true,
     dryRun: true,
     json: false,
+    packagePath: "",
   });
   assert.deepEqual(parseArguments(["doctor", "--host=omp", "--json"]), {
     command: "doctor",
@@ -58,6 +113,7 @@ test("parses only supported command and flag combinations", () => {
     local: false,
     dryRun: false,
     json: true,
+    packagePath: "",
   });
   assert.throws(() => parseArguments(["doctor", "--local"]), /--local/);
   assert.throws(() => parseArguments(["install", "--json"]), /--json/);

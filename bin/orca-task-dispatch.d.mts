@@ -38,7 +38,15 @@ export function parseArguments(argv: string[]): {
   local: boolean;
   dryRun: boolean;
   json: boolean;
+  /** Directory to link instead of resolving the published package; empty when unset. */
+  packagePath: string;
 };
-export function createHostAction(operation: Operation, host: Host, local: boolean): CommandAction;
+export function createHostAction(
+  operation: Operation,
+  host: Host,
+  local: boolean,
+  /** Verified for `--host omp` only; other hosts reject a directory install. */
+  packagePath?: string,
+): CommandAction;
 export function runDoctor(host: Host, dependencies?: Partial<DoctorDependencies>): Promise<DoctorReport>;
 export function main(argv: string[], dependencies?: Partial<MainDependencies>): Promise<number>;

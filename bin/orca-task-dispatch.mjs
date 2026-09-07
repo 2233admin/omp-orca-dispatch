@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -19,7 +20,7 @@ export const COMPATIBILITY = Object.freeze({
 const HELP = `orca-task-dispatch ${packageMetadata.version}
 
 Usage:
-  orca-task-dispatch install [--host pi|omp] [--local] [--dry-run]
+  orca-task-dispatch install [--host pi|omp] [--local | --path <dir>] [--dry-run]
   orca-task-dispatch uninstall [--host pi|omp] [--local] [--dry-run]
   orca-task-dispatch doctor [--host pi|omp] [--json]
   orca-task-dispatch help
@@ -28,6 +29,10 @@ Usage:
 Options:
   --host pi|omp  Select the host; defaults to omp
   --local        Use the host's project-local install or uninstall mode
+  --path <dir>   Link an unpublished checkout instead of resolving the published
+                 package. Requires a directory containing package.json, cannot be
+                 combined with --local, applies to install only, and is currently
+                 supported by --host omp only
   --dry-run      Print the exact executable and argv without running it
   --json         Emit machine-readable doctor output
 `;
@@ -46,6 +51,7 @@ export function parseArguments(argv) {
   let local = false;
   let dryRun = false;
   let json = false;
+  let packagePath = "";
   while (normalized.length > 0) {
     const flag = normalized.shift();
     if (flag === "--host") {
@@ -54,6 +60,12 @@ export function parseArguments(argv) {
       host = value;
     } else if (flag?.startsWith("--host=")) {
       host = flag.slice("--host=".length);
+    } else if (flag === "--path") {
+      const value = normalized.shift();
+      if (!value) throw new Error("--path requires a directory");
+      packagePath = value;
+    } else if (flag?.startsWith("--path=")) {
+      packagePath = flag.slice("--path=".length);
     } else if (flag === "--local") {
       local = true;
     } else if (flag === "--dry-run") {
@@ -66,7 +78,7 @@ export function parseArguments(argv) {
   }
 
   if (host !== "pi" && host !== "omp") throw new Error("--host must be pi or omp");
-  if ((command === "help" || command === "version") && (local || dryRun || json || host !== "omp")) {
+  if ((command === "help" || command === "version") && (local || dryRun || json || packagePath || host !== "omp")) {
     throw new Error(`${command} does not accept host or action flags`);
   }
   if (command === "doctor" && local) throw new Error("--local is only supported by install and uninstall");
@@ -74,17 +86,38 @@ export function parseArguments(argv) {
   if ((command === "install" || command === "uninstall") && json) {
     throw new Error("--json is only supported by doctor");
   }
+  if (packagePath) {
+    // Uninstall removes by plugin name, so a source path is meaningless there.
+    if (command !== "install") throw new Error("--path is only supported by install");
+    // `--local` selects the host's project-local mode; an explicit source contradicts it.
+    if (local) throw new Error("--path and --local are mutually exclusive");
+  }
 
-  return { command, host, local, dryRun, json };
+  return { command, host, local, dryRun, json, packagePath };
 }
 
 /**
  * @param {"install" | "uninstall"} operation
  * @param {"pi" | "omp"} host
  * @param {boolean} local
+ * @param {string} [packagePath] Directory to link instead of resolving the published package
  */
-export function createHostAction(operation, host, local) {
+export function createHostAction(operation, host, local, packagePath = "") {
   const versioned = `${packageMetadata.name}@${packageMetadata.version}`;
+  if (packagePath) {
+    // Verified against `omp plugin install <dir>`, which reports "Linked <name> from <dir>".
+    // Pi's directory-install syntax is unverified, so refuse rather than emit a guessed argv.
+    if (host !== "omp") throw new Error("--path is currently supported only by --host omp");
+    // Uninstall removes by plugin name; a source directory cannot express that.
+    if (operation !== "install") throw new Error("--path is only supported by install");
+    const absolute = resolve(packagePath);
+    // Refuse before handing the host something it will reject, so --dry-run cannot claim a
+    // nonexistent directory is installable.
+    if (!existsSync(join(absolute, "package.json"))) {
+      throw new Error(`--path is not an installable package (no package.json): ${absolute}`);
+    }
+    return { command: "omp", args: ["plugin", "install", absolute] };
+  }
   if (host === "pi") {
     return {
       command: "pi",
@@ -96,6 +129,7 @@ export function createHostAction(operation, host, local) {
     args: ["plugin", operation === "install" ? "install" : "uninstall", operation === "install" ? versioned : packageMetadata.name, ...(local ? ["--local"] : [])],
   };
 }
+
 
 /** @param {string} version */
 function versionTuple(version) {
@@ -239,7 +273,7 @@ export async function main(argv, dependencies = {}) {
       return report.ok ? 0 : 1;
     }
 
-    const action = createHostAction(options.command, options.host, options.local);
+    const action = createHostAction(options.command, options.host, options.local, options.packagePath);
     if (options.dryRun) {
       stdout(`${JSON.stringify({ dryRun: true, host: options.host, action }, null, 2)}\n`);
       return 0;
