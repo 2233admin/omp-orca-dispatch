@@ -132,10 +132,24 @@ same service returned `401`.
   merely wants credentials.
 - No HTTP response (`000`, connect refused, timeout) means **unreachable**.
 
-Implemented as `probeTracker(baseUrl)`. `orca_outbox_sync` reads the endpoint from `MULTICA_SERVER_URL` only. It is
-deliberately not a tool parameter: a caller-supplied URL would let a model aim the probe at an
-arbitrary internal host, making the tool an SSRF primitive. Only a base URL is ever read, never
-a token. The plan is produced either way, so items can be queued with no network at all.
+Implemented as `probeTracker(baseUrl)`, which takes a base URL so it stays independently
+testable. The value it receives is not caller-controlled.
+
+**The endpoint comes from `MULTICA_SERVER_URL` only, never from a tool parameter.** Both host
+schemas give `orca_outbox_sync` an empty parameter object for exactly this reason: a
+caller-supplied URL would let a model aim the probe at an arbitrary internal host, turning the
+tool into an SSRF primitive against the fleet network. The operator configures the endpoint;
+only a base URL is ever read from the environment, never a token.
+
+The environment value is not trusted blindly either. It is validated before any request is
+made — parsed as an absolute URL and restricted to the `http:`/`https:` schemes, so an
+unparsable, relative, or non-HTTP value is refused rather than handed to `fetch`. An unset or
+refused endpoint is reported as unprobed. That validation is being added to `src/offline.ts` in
+parallel with this document; this paragraph is the contract it must satisfy.
+
+The plan is produced either way, so items can be queued with no network at all: with no usable
+endpoint the tool still returns every sync record, reports the reason reachability was not
+measured, and leaves the items queued.
 
 ## Proxy hygiene
 

@@ -72,6 +72,21 @@ The package manifests select the host-specific modules explicitly:
 - `extensions/pi.ts` registers TypeBox parameters for Pi.
 - `extensions/omp.ts` registers Zod parameters plus OMP `approval: "write"` and `loadMode: "essential"` metadata.
 
+## Tools
+
+Both entrypoints register the same three tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `orca_task_dispatch` | Creates 2–3 sibling worktrees from the parent's exact committed HEAD and launches one worker per disjoint scope. |
+| `orca_backlog` | Records work locally so it survives tracker downtime — `enqueue`, `claim`, `complete`, `bind`, `ack`, `list` against an append-only per-repository log — and never contacts the tracker. |
+| `orca_outbox_sync` | Turns completed backlog items into an executable tracker-write plan (issue reference, UTF-8 body file, exact argv), holding no credential and performing no write itself. |
+
+`orca_outbox_sync` takes no parameters: its reachability probe reads the tracker base URL from
+`MULTICA_SERVER_URL` only, never from a tool argument. See the
+[offline backlog and outbox contract](docs/offline-backlog-contract.md) for the state machine,
+locking scope, and sync-record details.
+
 ## Dispatch contract
 
 A request must contain exactly 2 or 3 independent slices. Slice names are normalized before uniqueness checks. Every scope is a repository-relative literal file or directory path; globs, parent traversal, repository root ownership, `.git`, absolute paths, Windows-reserved names, cross-slice parent/child overlap, and C0 (`U+0000`–`U+001F`) or DEL (`U+007F`) control characters are rejected. Scope keys are compared case-insensitively after NFC normalization so canonically equivalent Unicode paths cannot bypass disjointness checks; the first validated scope spelling is retained in the returned slice.
