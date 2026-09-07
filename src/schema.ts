@@ -4,6 +4,11 @@ export const MIN_SLICES = 2;
 export const MAX_SLICES = 3;
 
 const BACKLOG_ACTIONS = ["enqueue", "claim", "complete", "bind", "ack", "list"] as const;
+const DISPATCH_ACTIONS = ["dispatch", "collect", "integrate"] as const;
+const ACTION_DESCRIPTION =
+  "dispatch (default) records a round and creates the children; collect reports round state and changes nothing; integrate gates and merges one round";
+const ROUND_ID_DESCRIPTION = "Dispatch round id; required by integrate, optional filter for collect";
+const SUPERSEDES_DESCRIPTION = "Held round id this dispatch supersedes; a held round is never revived in place";
 const ITEM_STATES = ["queued", "claimed", "completed", "synced", "pending-triage"] as const;
 
 /** Backlog parameters for Pi (TypeBox). Mirrors createOmpBacklogParameters exactly. */
@@ -66,6 +71,9 @@ export function createPiParameters() {
       Type.String({ description: "Configured Orca agent selector; defaults to ORCA_DISPATCH_AGENT or omp" }),
     ),
     dryRun: Type.Optional(Type.Boolean({ description: "Validate and show plans without creating worktrees" })),
+    action: Type.Optional(Type.Union(DISPATCH_ACTIONS.map(value => Type.Literal(value)), { description: ACTION_DESCRIPTION })),
+    roundId: Type.Optional(Type.String({ description: ROUND_ID_DESCRIPTION })),
+    supersedes: Type.Optional(Type.String({ description: SUPERSEDES_DESCRIPTION })),
   });
 }
 
@@ -128,5 +136,8 @@ export function createOmpParameters(z: ZodApi): ZodSchema {
     setup: z.enum(["skip", "run", "inherit"]).optional().describe("Orca setup mode; defaults to skip"),
     agent: z.string().optional().describe("Configured Orca agent selector; defaults to ORCA_DISPATCH_AGENT or omp"),
     dryRun: z.boolean().optional().describe("Validate and show plans without creating worktrees"),
+    action: z.enum(DISPATCH_ACTIONS).optional().describe(ACTION_DESCRIPTION),
+    roundId: z.string().optional().describe(ROUND_ID_DESCRIPTION),
+    supersedes: z.string().optional().describe(SUPERSEDES_DESCRIPTION),
   });
 }

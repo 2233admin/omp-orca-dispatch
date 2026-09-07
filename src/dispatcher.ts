@@ -3,6 +3,15 @@ import { WORKTREE_BACKENDS } from "./backends/index.js";
 import type { BackendRuntime, ChildRequest, DispatchBackend } from "./backends/types.js";
 import { DISPATCH_COMMENT_PREFIX, redact, text, truncate } from "./backends/support.js";
 import { MAX_SLICES, MIN_SLICES } from "./schema.js";
+import {
+  beginRound,
+  collectRounds,
+  integrateRound,
+  recordDispatchOutcome,
+  validateRoundId,
+  type DispatchedMember,
+  type LedgerLocation,
+} from "./ledger.js";
 
 const MAX_TASK_CHARS = 7_000;
 const MAX_NAME_CHARS = 48;
@@ -10,6 +19,14 @@ const MAX_SOURCE_REF_CHARS = 200;
 const MAX_SCOPE_CHARS = 240;
 const VALID_SETUP: Record<string, true> = { skip: true, run: true, inherit: true };
 const VALID_AGENT = /^[A-Za-z0-9._-]{1,48}$/;
+/**
+ * Three actions on one tool: `dispatch` opens a round and creates children, `collect` inspects
+ * it, `integrate` gates and merges it. They share one registration because the host parameter
+ * schema is per-tool, and a second tool would need a second host-specific schema for one field.
+ */
+const VALID_ACTION: Record<string, true> = { dispatch: true, collect: true, integrate: true };
+
+export type DispatchAction = "dispatch" | "collect" | "integrate";
 
 export { redact };
 
@@ -17,6 +34,7 @@ type ValidatedDispatch = {
   backend: DispatchBackend;
   task: string;
   sourceRef?: string;
+  supersedes?: string;
   slices: TaskSlice[];
   setup: SetupMode;
   agent: string;
@@ -32,6 +50,20 @@ function result(details: Record<string, unknown>): ToolResult {
     content: [{ type: "text", text: JSON.stringify(details, null, 2) }],
     details,
   };
+}
+
+/** `collect` and `integrate` report one operator screen; the details carry the same facts. */
+function screenResult(screen: string, details: Record<string, unknown>): ToolResult {
+  return {
+    content: [{ type: "text", text: screen }],
+    details,
+  };
+}
+
+function validateAction(value: unknown): DispatchAction {
+  const action = text(value) || "dispatch";
+  if (!VALID_ACTION[action]) throw new Error("action must be dispatch, collect, or integrate");
+  return action as DispatchAction;
 }
 
 export function safeWorktreeName(value: unknown): string {
@@ -142,6 +174,7 @@ export function validateTaskDispatch(params: TaskDispatchParams): ValidatedDispa
   const setup = params.setup ?? "skip";
   if (!VALID_SETUP[setup]) throw new Error("setup must be skip, run, or inherit");
   const sourceRef = validateSourceRef(params.sourceRef);
+  const supersedes = "supersedes" in params ? validateRoundId(params.supersedes) : undefined;
   return {
     backend: validateBackend("backend" in params ? params.backend : undefined),
     task,
@@ -149,6 +182,7 @@ export function validateTaskDispatch(params: TaskDispatchParams): ValidatedDispa
     slices,
     setup,
     agent: validateAgent(params.agent),
+    ...(supersedes ? { supersedes } : {}),
     dryRun: params.dryRun ?? false,
   };
 }
@@ -200,23 +234,71 @@ function buildRequests(params: ValidatedDispatch): ChildRequest[] {
   }));
 }
 
-export function registerOrcaTaskDispatch(pi: HostApi, parameters: unknown, metadata: ToolMetadata = {}): void {
+/**
+ * One created child as the ledger records it, kept beside the caller-facing slice result so a
+ * `dispatched` record can never be reconstructed from the report the model sees.
+ */
+type CreationOutcome = {
+  slice: Record<string, unknown>;
+  member?: DispatchedMember | undefined;
+  failure?: { name: string; message: string } | undefined;
+};
+
+export function registerOrcaTaskDispatch(
+  pi: HostApi,
+  parameters: unknown,
+  metadata: ToolMetadata = {},
+  stateRoot?: string,
+): void {
   pi.registerTool({
     name: "orca_task_dispatch",
     label: "Orca Multi-Worktree Dispatch",
     description:
-      "Creates 2-3 sibling Orca worktrees from one committed parent HEAD and launches one configured worker per independent, disjoint file scope. Use only when the user explicitly asks Orca to split a task across multiple worktrees. The caller remains the integration coordinator.",
+      "Creates 2-3 sibling Orca worktrees from one committed parent HEAD and launches one configured worker per independent, disjoint file scope. Use only when the user explicitly asks Orca to split a task across multiple worktrees. " +
+      'action "dispatch" (the default) records a dispatch round and creates the children; action "collect" reports one screen of round state and changes nothing; action "integrate" takes that round id, gates the combined tree under .orca-task-dispatch/gates.json, and fast-forwards the current branch only when every check passes. ' +
+      "collect and integrate use only roundId and must run from the parent worktree that dispatched the round; they ignore task and slices.",
     parameters,
     ...metadata,
     async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       try {
-        const params = validateTaskDispatch(rawParams);
-        const backend = WORKTREE_BACKENDS[params.backend];
+        const raw: Record<string, unknown> = isObject(rawParams) ? rawParams : {};
+        const action = validateAction(raw.action);
         const runtime: BackendRuntime = {
           pi,
           cwd: text(ctx?.cwd) || process.cwd(),
           ...(signal ? { signal } : {}),
         };
+
+        if (action !== "dispatch") {
+          const backend = WORKTREE_BACKENDS[validateBackend(raw.backend)];
+          // No slice is requested by these actions, so no scope preflight applies. The context
+          // still refuses a dispatcher-created child: only the parent coordinates a round.
+          const context = await backend.loadContext(runtime, []);
+          const location: LedgerLocation = {
+            backendId: backend.id,
+            repoId: context.repoId,
+            parentWorktreeId: context.worktreeId,
+          };
+          if (action === "collect") {
+            const { screen, ...collected } = await collectRounds({
+              runtime,
+              location,
+              ...(raw.roundId === undefined ? {} : { roundId: validateRoundId(raw.roundId) }),
+              ...(stateRoot ? { stateRoot } : {}),
+            });
+            return screenResult(screen, { action, backend: backend.id, ...collected });
+          }
+          const { screen, ...integrated } = await integrateRound({
+            runtime,
+            location,
+            roundId: validateRoundId(raw.roundId),
+            ...(stateRoot ? { stateRoot } : {}),
+          });
+          return screenResult(screen, { action, backend: backend.id, ...integrated });
+        }
+
+        const params = validateTaskDispatch(rawParams);
+        const backend = WORKTREE_BACKENDS[params.backend];
         const context = await backend.loadContext(runtime, params.slices);
         const requests = buildRequests(params);
         const common = {
@@ -253,38 +335,90 @@ export function registerOrcaTaskDispatch(pi: HostApi, parameters: unknown, metad
           });
         }
 
-        const slices = await Promise.all(
-          requests.map(async (request) => {
+        const location: LedgerLocation = {
+          backendId: backend.id,
+          repoId: context.repoId,
+          parentWorktreeId: context.worktreeId,
+        };
+        // Membership first: a dispatch that partly fails must not be able to shrink the round to
+        // the children that happened to succeed, so the round is durable before any creation.
+        const roundId = await beginRound(
+          location,
+          {
+            baseHead: context.head,
+            members: params.slices.map((slice) => ({ name: slice.name, scope: slice.scope })),
+            ...(params.supersedes ? { supersedes: params.supersedes } : {}),
+          },
+          stateRoot,
+        );
+
+        const outcomes: CreationOutcome[] = await Promise.all(
+          requests.map(async (request): Promise<CreationOutcome> => {
             try {
               const created = await backend.createChild(request, context, runtime);
+              const extra = created.extra ?? {};
               return {
-                name: request.name,
-                status: "dispatched",
-                worktreeId: created.worktreeId,
-                worktreePath: created.worktreePath,
-                agentTerminalHandle: created.agentTerminalHandle,
-                scope: request.slice.scope,
-                ...(created.extra ?? {}),
+                slice: {
+                  name: request.name,
+                  status: "dispatched",
+                  worktreeId: created.worktreeId,
+                  worktreePath: created.worktreePath,
+                  agentTerminalHandle: created.agentTerminalHandle,
+                  scope: request.slice.scope,
+                  ...extra,
+                },
+                member: {
+                  name: request.name,
+                  // The parent resolves this child's head from the branch itself; a backend that
+                  // names the branch reports it, otherwise the slice name is the branch.
+                  branch: text(extra.branch) || request.name,
+                  worktreeId: created.worktreeId,
+                  worktreePath: created.worktreePath,
+                },
               };
             } catch (error) {
+              const message = redact(error instanceof Error ? error.message : String(error));
               return {
-                name: request.name,
-                status: "failed",
-                message: redact(error instanceof Error ? error.message : String(error)),
-                possiblePartialCreate: true,
-                scope: request.slice.scope,
+                slice: {
+                  name: request.name,
+                  status: "failed",
+                  message,
+                  possiblePartialCreate: true,
+                  scope: request.slice.scope,
+                },
+                failure: { name: request.name, message },
               };
             }
           }),
         );
-        const succeeded = slices.filter((slice) => slice.status === "dispatched").length;
+        const slices = outcomes.map((outcome) => outcome.slice);
+        const succeeded = outcomes.filter((outcome) => outcome.member !== undefined).length;
+        await recordDispatchOutcome(
+          location,
+          roundId,
+          {
+            dispatched: outcomes.flatMap((outcome) => (outcome.member ? [outcome.member] : [])),
+            failed: outcomes.flatMap((outcome) => (outcome.failure ? [outcome.failure] : [])),
+          },
+          stateRoot,
+        );
+
         return result({
           status: succeeded === slices.length ? "dispatched" : succeeded === 0 ? "failed" : "partial",
+          roundId,
           ...common,
+          ...(params.supersedes ? { supersedes: params.supersedes } : {}),
           succeeded,
           failed: slices.length - succeeded,
           slices,
+          // Unchanged meaning: true when at least one slice dispatched. Whether the *round* can
+          // be integrated is a separate fact, because a partly created round is terminally held.
           integrationRequired: succeeded > 0,
+          roundHeld: succeeded !== slices.length,
+          nextStep:
+            succeeded === slices.length
+              ? `orca_task_dispatch action=integrate roundId=${roundId}`
+              : `round ${roundId} is held: dispatch a superseding round with supersedes=${roundId}`,
         });
       } catch (error) {
         return result({
