@@ -25,7 +25,10 @@ jobs:
         with:
           node-version: 22.19.0
           cache: npm
-      - run: npm ci
+      - name: Pin the registry so a mirror cannot re-pollute package-lock resolved URLs
+        run: npm ci
+        env:
+          npm_config_registry: https://registry.npmjs.org
       - run: npm run check
       - run: npm run build
       - run: npm run package:dry-run

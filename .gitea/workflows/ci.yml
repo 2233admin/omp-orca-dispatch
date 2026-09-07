@@ -26,6 +26,8 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          npm_config_registry: https://registry.npmjs.org
 
       - name: Check behavior and types
         run: npm run check
